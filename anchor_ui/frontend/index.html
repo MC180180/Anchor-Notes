@@ -120,7 +120,7 @@ body::before{content:'';position:absolute;inset:0;background:var(--bg);z-index:-
 .ln{padding-right:12px;color:var(--txt);opacity:0.2;transition:color .15s, opacity .15s;position:absolute;right:0}
 .ln.active{color:var(--txt);opacity:0.8}
 /* 结构树 */
-#struct-tree{position:absolute;top:120px;bottom:40px;right:0;width:10%;overflow:hidden;z-index:6;pointer-events:none;font-family:'Consolas',monospace;font-size:11px;color:var(--txt);opacity:0.5;user-select:none;transition:right .3s, color 0.3s, opacity 0.3s;line-height:1.8}
+#struct-tree{position:absolute;top:120px;bottom:40px;right:20px;width:10%;overflow:hidden;z-index:6;pointer-events:none;font-family:'Consolas',monospace;font-size:11px;color:var(--txt);opacity:0.5;user-select:none;transition:right .3s, color 0.3s, opacity 0.3s;line-height:1.8}
 .st-node{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:absolute;right:0;padding-left:6px;padding-right:25px;pointer-events:auto;transition:color 0.3s}
 .drip-effect { filter: url(#drip-filter); animation: dripBreath 6s ease-in-out infinite alternate; }
 .beam-effect { text-shadow: 0 0 6px rgba(255,255,255,0.7), 0 0 15px rgba(255,255,255,0.4), 0 -15px 20px rgba(255,255,255,0.2), 0 15px 20px rgba(255,255,255,0.2); }
@@ -220,12 +220,23 @@ body.glitch-mode #home-view * {
     box-shadow: none !important;
     border-radius: 0 !important;
 }
+/* 优化超大文本渲染性能 */
+.ql-editor > * {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 24px;
+}
 </style>
 </head>
 <body>
 <canvas id="glcanvas"></canvas>
 <div class="bottom-bar">
-    <div id="save-status" style="margin-right: auto; color: var(--txt); pointer-events: none;">已自动保存</div>
+        <div id="save-status" style="margin-right: auto; color: var(--txt); pointer-events: none;">已自动保存</div>
+    <div id="streaming-status" style="display:none; align-items:center; margin-right: 15px; color: #ff9800; font-size: 13px;">
+        <span id="streaming-text" style="font-family: monospace;">缓冲 0%</span>
+        <div style="width: 80px; height: 4px; background: rgba(255,255,255,0.2); border-radius: 2px; margin-left: 8px; overflow: hidden;">
+            <div id="streaming-bar" style="width: 0%; height: 100%; background: #ff9800;"></div>
+        </div>
+    </div>
     <div class="bottom-bar-item" id="status-cursor">行 1, 列 1</div>
     <div class="bottom-bar-item">空格: 4</div>
     <div class="bottom-bar-item">UTF-8</div>
@@ -1771,7 +1782,35 @@ quill.root.addEventListener('paste', function(e) {
                         .then(function(res) {
                             var range = quill.getSelection(true);
                             var index = range ? range.index : quill.getLength();
-                            var DeltaCls = Quill.import('delta');
+                            
+var streamIsLoading = false;
+document.querySelector('#editor-container').addEventListener('scroll', function(e) {
+    if (streamIsActive && !streamIsLoading) {
+        var el = e.target;
+        if (el.scrollHeight - el.scrollTop - el.clientHeight < 2000) {
+            streamIsLoading = true;
+            document.getElementById('streaming-text').innerText = '缓冲中...';
+            // 异步执行，释放主线程，防止滑动瞬间卡死
+            setTimeout(function() {
+                try {
+                    loadNextStreamChunk();
+                } catch(err) {
+                    console.error("Stream loading error:", err);
+                }
+                streamIsLoading = false;
+            }, 50);
+        }
+    }
+});
+document.addEventListener('keydown', function(e) {
+    if (e.ctrlKey && (e.key === 'a' || e.key === 'A' || e.key === 'End' || e.key === 'Home')) {
+        if (streamIsActive) {
+            loadAllStreamChunks();
+        }
+    }
+});
+
+var DeltaCls = Quill.import('delta');
                             var delta = new DeltaCls().retain(index).insert({ image: res.path });
                             quill.updateContents(delta, 'user');
                             quill.setSelection(index + 1, 'silent');
@@ -2037,6 +2076,129 @@ function opColor(opType) {
 }
 
 // 从oldDelta中提取被删除的文本
+
+// --- 流式加载全局状态 ---
+var streamOps = [];
+var streamTotalLen = 0;
+var streamLoadedLen = 0;
+var streamIsActive = false;
+
+function applyContentStream(ops) {
+    var CHUNK_SIZE_CHARS = 100000; // 首次加载10万字，兼顾首屏速度与阅读体验
+    streamOps = [];
+    streamTotalLen = ops.length; // 以 op 块数量估算进度
+    
+    var currentChunk = [];
+    var charCount = 0;
+    
+    for (var i = 0; i < ops.length; i++) {
+        var op = ops[i];
+        if (charCount < CHUNK_SIZE_CHARS) {
+            if (typeof op.insert === 'string') {
+                var len = op.insert.length;
+                if (charCount + len <= CHUNK_SIZE_CHARS) {
+                    currentChunk.push(op);
+                    charCount += len;
+                } else {
+                    var take = CHUNK_SIZE_CHARS - charCount;
+                    currentChunk.push({ insert: op.insert.substring(0, take), attributes: op.attributes });
+                    streamOps.push({ insert: op.insert.substring(take), attributes: op.attributes });
+                    streamOps = streamOps.concat(ops.slice(i + 1));
+                    charCount += take;
+                    break;
+                }
+            } else {
+                currentChunk.push(op);
+                charCount += 1;
+            }
+        } else {
+            streamOps = ops.slice(i);
+            break;
+        }
+    }
+    
+    streamLoadedLen = streamTotalLen - streamOps.length;
+    quill.setContents(currentChunk);
+    
+    if (streamOps.length > 0) {
+        streamIsActive = true;
+        document.getElementById('streaming-status').style.display = 'flex';
+        updateStreamUI();
+    } else {
+        streamIsActive = false;
+        document.getElementById('streaming-status').style.display = 'none';
+    }
+}
+
+function loadNextStreamChunk() {
+    if (!streamIsActive || streamOps.length === 0) return;
+    var CHUNK_SIZE_CHARS = 50000; // 每次增量加载5万字
+    var currentChunk = [];
+    var charCount = 0;
+    var DeltaCls = Quill.import('delta');
+    
+    for (var i = 0; i < streamOps.length; i++) {
+        var op = streamOps[i];
+        if (typeof op.insert === 'string') {
+            var len = op.insert.length;
+            if (charCount + len <= CHUNK_SIZE_CHARS) {
+                currentChunk.push(op);
+                charCount += len;
+            } else {
+                var take = CHUNK_SIZE_CHARS - charCount;
+                currentChunk.push({ insert: op.insert.substring(0, take), attributes: op.attributes });
+                streamOps[i] = { insert: op.insert.substring(take), attributes: op.attributes };
+                streamOps = streamOps.slice(i);
+                charCount += take;
+                break;
+            }
+        } else {
+            currentChunk.push(op);
+            charCount += 1;
+        }
+        if (i === streamOps.length - 1) {
+            streamOps = []; 
+        }
+    }
+    
+    streamLoadedLen = streamTotalLen - streamOps.length;
+    var appendDelta = new DeltaCls().retain(quill.getLength() - 1).concat(new DeltaCls(currentChunk));
+    
+    isProgrammaticChange = true;
+    quill.updateContents(appendDelta, 'silent');
+    isProgrammaticChange = false;
+    
+    updateStreamUI();
+    if (streamOps.length === 0) {
+        streamIsActive = false;
+        setTimeout(function() { document.getElementById('streaming-status').style.display = 'none'; }, 1000);
+    }
+}
+
+function updateStreamUI() {
+    var pct = Math.floor((streamLoadedLen / streamTotalLen) * 100);
+    if (pct > 100) pct = 100;
+    document.getElementById('streaming-text').innerText = '缓冲 ' + pct + '%';
+    document.getElementById('streaming-bar').style.width = pct + '%';
+}
+
+function loadAllStreamChunks() {
+    if (!streamIsActive || streamOps.length === 0) return;
+    document.getElementById('streaming-text').innerText = '全量合并...';
+    // 强制一帧后执行，以便渲染文本
+    setTimeout(function() {
+        var DeltaCls = Quill.import('delta');
+        var appendDelta = new DeltaCls().retain(quill.getLength() - 1).concat(new DeltaCls(streamOps));
+        isProgrammaticChange = true;
+        quill.updateContents(appendDelta, 'silent');
+        isProgrammaticChange = false;
+        streamOps = [];
+        streamIsActive = false;
+        updateStreamUI();
+        document.getElementById('streaming-status').style.display = 'none';
+    }, 10);
+}
+
 function extractDeletedText(delta, oldDelta) {
     var oldText = '';
     oldDelta.ops.forEach(function(op) { if (typeof op.insert === 'string') oldText += op.insert; });
@@ -2083,7 +2245,7 @@ var BATCH_INTERVAL = 3000; // 3秒
 function flushBatch() {
     if (!pendingBatch || !currentNoteId) return;
     clearTimeout(batchFlushTimer);
-    var text = quill.getText();
+    var text = quill.getText(0, 150);
     var idx = text.indexOf('\n');
     var title = idx > 0 ? text.substring(0, idx).trim() : '无标题';
     var preview = text.substring(idx + 1, idx + 101).trim().replace(/\n/g, ' ');
@@ -2770,7 +2932,7 @@ function doOpenNote(id, background, isEncrypted) {
     invoke('get_content', { noteId: id }).then(function(contentJson) {
         if (contentJson && contentJson.length > 2) {
             var parsed = JSON.parse(contentJson);
-            quill.setContents(parsed);
+            applyContentStream(parsed.ops || parsed);
             isProgrammaticChange = false;
             document.getElementById('save-status').innerText = '已自动保存';
             document.getElementById('save-status').style.color = '#4caf50'; clearTimeout(window.saveStatusTimeout); window.saveStatusTimeout = setTimeout(function(){var e=document.getElementById('save-status');if(e)e.style.color='var(--txt)';}, 2000);
@@ -3154,11 +3316,11 @@ function updateCursorStatus() {
 }
 
 function updateCapsule() {
-    var text = quill.getText();
+    var text = quill.getText(0, 150);
     var idx = text.indexOf('\n');
     var title = idx > 0 ? text.substring(0, idx).trim() : (text.trim() ? text.trim() : '无标题');
     if (!title) title = '无标题';
-    var wordCount = Math.max(0, text.length - 1);
+    var wordCount = Math.max(0, quill.getLength() - 1);
 
     var imgCount = 0;
     var vidCount = 0;
@@ -3436,6 +3598,13 @@ document.getElementById('struct-tree').addEventListener('mouseout', function(e) 
     }
 });
 
+// 将鼠标滚轮事件穿透传递给编辑器，防止覆盖区无法滚动
+document.getElementById('struct-tree').addEventListener('wheel', function(e) {
+    var editorCont = document.getElementById('editor-container');
+    editorCont.scrollTop += e.deltaY;
+    e.preventDefault();
+}, { passive: false });
+
 document.getElementById('struct-tree').addEventListener('click', function(e) {
     var btn = e.target.closest('.st-copy-btn');
     if (btn) {
@@ -3634,8 +3803,7 @@ var semanticDebounceTimer = null;
 
 function processDirtyRegion(changeStart, changeEnd) {
     if (!semanticActive) return;
-    var text = quill.getText();
-    var textLen = text.length - 1;
+    var textLen = Math.max(0, quill.getLength() - 1);
     var windowStart = Math.max(0, changeStart - 4);
     var windowEnd = Math.min(textLen, changeEnd + 4);
     
@@ -3646,14 +3814,17 @@ function processDirtyRegion(changeStart, changeEnd) {
         if (t && (t.startsWith('B-') || t.startsWith('S-'))) break;
         windowStart--;
     }
+    windowStart = Math.max(0, windowStart);
+    
     var searchEndLimit = Math.min(textLen, windowEnd + 50);
     while (windowEnd < searchEndLimit) {
         var t = semanticCharTags[windowEnd - 1];
         if (t && (t.startsWith('E-') || t.startsWith('S-'))) break;
         windowEnd++;
     }
+    windowEnd = Math.min(textLen, windowEnd);
     
-    var windowText = text.substring(windowStart, windowEnd);
+    var windowText = quill.getText(windowStart, windowEnd - windowStart);
     if (windowText.length === 0) {
         debouncedSaveSemanticCache();
         return;
@@ -4251,6 +4422,34 @@ document.getElementById('ex-confirm-btn').addEventListener('click', function() {
     });
     });
 });
+
+var streamIsLoading = false;
+document.querySelector('#editor-container').addEventListener('scroll', function(e) {
+    if (streamIsActive && !streamIsLoading) {
+        var el = e.target;
+        if (el.scrollHeight - el.scrollTop - el.clientHeight < 2000) {
+            streamIsLoading = true;
+            document.getElementById('streaming-text').innerText = '缓冲中...';
+            // 异步执行，释放主线程，防止滑动瞬间卡死
+            setTimeout(function() {
+                try {
+                    loadNextStreamChunk();
+                } catch(err) {
+                    console.error("Stream loading error:", err);
+                }
+                streamIsLoading = false;
+            }, 50);
+        }
+    }
+});
+document.addEventListener('keydown', function(e) {
+    if (e.ctrlKey && (e.key === 'a' || e.key === 'A' || e.key === 'End' || e.key === 'Home')) {
+        if (streamIsActive) {
+            loadAllStreamChunks();
+        }
+    }
+});
+
 </script>
 </body>
 </html>
