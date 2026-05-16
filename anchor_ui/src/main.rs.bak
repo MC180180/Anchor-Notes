@@ -1,0 +1,600 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+use rusqlite::{params, Connection};
+use serde::{Serialize, Deserialize};
+use std::sync::Mutex;
+use std::path::{Path, PathBuf};
+use tauri::State;
+use uuid::Uuid;
+use chrono::Utc;
+use std::fs;
+use flate2::write::GzEncoder;
+use flate2::Compression;
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
+use jieba_rs::Jieba;
+
+fn data_root() -> PathBuf {
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join("data")
+}
+
+fn note_dir(note_id: &str) -> PathBuf {
+    data_root().join(note_id)
+}
+
+struct AppState {
+    index_db: Mutex<Connection>,
+    jieba: Mutex<Jieba>,
+}
+
+#[derive(Serialize)]
+struct Note {
+    id: String,
+    created_at: i64,
+    updated_at: i64,
+    title: String,
+    preview: String,
+    folder_id: Option<String>,
+    background: String,
+}
+
+#[derive(serde::Serialize)]
+struct Folder {
+    id: String,
+    name: String,
+    created_at: i64,
+}
+
+#[derive(Serialize)]
+struct NoteEvent {
+    id: String,
+    note_id: String,
+    timestamp: i64,
+    operation_type: String,
+    delta_json: String,
+}
+
+fn init_index_db() -> Connection {
+    let root = data_root();
+    fs::create_dir_all(&root).expect("无法创建 data 目录");
+    let db = Connection::open(root.join("notes_index.db")).expect("无法打开索引数据库");
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS notes (
+            id TEXT PRIMARY KEY, created_at INTEGER, updated_at INTEGER, title TEXT, preview TEXT
+        )", [],
+    ).unwrap();
+    db.execute("ALTER TABLE notes ADD COLUMN is_archived INTEGER DEFAULT 0", []).ok();
+    db.execute("ALTER TABLE notes ADD COLUMN folder_id TEXT", []).ok();
+    db.execute("ALTER TABLE notes ADD COLUMN background TEXT DEFAULT 'default'", []).ok();
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS folders (
+            id TEXT PRIMARY KEY, name TEXT, created_at INTEGER
+        )", [],
+    ).unwrap();
+    db
+}
+
+fn init_note_content_db(note_id: &str) -> Connection {
+    let db = Connection::open(note_dir(note_id).join("content.db")).expect("无法打开 content.db");
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS content (
+            id TEXT PRIMARY KEY DEFAULT 'current', delta_json TEXT, updated_at INTEGER
+        )", [],
+    ).unwrap();
+    db
+}
+
+fn init_note_timeline_db(note_id: &str) -> Connection {
+    let db = Connection::open(note_dir(note_id).join("timeline.db")).expect("无法打开 timeline.db");
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS events (
+            id TEXT PRIMARY KEY, timestamp INTEGER, operation_type TEXT, delta_json TEXT
+        )", [],
+    ).unwrap();
+    db
+}
+
+fn ensure_note_dirs(note_id: &str) {
+    let dir = note_dir(note_id);
+    for sub in &["images", "videos", "files", "audio"] {
+        fs::create_dir_all(dir.join(sub)).ok();
+    }
+}
+
+fn migrate_old_db_if_needed(index_db: &Connection) {
+    let old_db_path = std::env::current_dir().unwrap_or_default().join("anchor_data.db");
+    if !old_db_path.exists() { return; }
+    let old_db = match Connection::open(&old_db_path) { Ok(db) => db, Err(_) => return };
+    let mut stmt = match old_db.prepare("SELECT id, created_at, updated_at, title, preview FROM notes") {
+        Ok(s) => s, Err(_) => return,
+    };
+    let old_notes: Vec<(String, i64, i64, String, String)> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)))
+        .unwrap().filter_map(|r| r.ok()).collect();
+
+    for (id, created_at, updated_at, title, preview) in &old_notes {
+        let exists: bool = index_db
+            .query_row("SELECT COUNT(*) FROM notes WHERE id = ?1", params![id], |row| row.get::<_, i64>(0))
+            .map(|c| c > 0).unwrap_or(false);
+        if exists { continue; }
+        ensure_note_dirs(id);
+        index_db.execute(
+            "INSERT INTO notes (id, created_at, updated_at, title, preview) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![id, created_at, updated_at, title, preview],
+        ).ok();
+        let timeline_db = init_note_timeline_db(id);
+        let mut ev_stmt = old_db.prepare(
+            "SELECT id, timestamp, operation_type, delta_json FROM note_events WHERE note_id = ?1 ORDER BY timestamp ASC"
+        ).unwrap();
+        let events: Vec<(String, i64, String, String)> = ev_stmt
+            .query_map(params![id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
+            .unwrap().filter_map(|r| r.ok()).collect();
+        for (eid, ts, op, delta) in &events {
+            timeline_db.execute(
+                "INSERT OR IGNORE INTO events (id, timestamp, operation_type, delta_json) VALUES (?1, ?2, ?3, ?4)",
+                params![eid, ts, op, delta],
+            ).ok();
+        }
+        let content_db = init_note_content_db(id);
+        if let Some(last) = events.last() {
+            content_db.execute(
+                "INSERT OR REPLACE INTO content (id, delta_json, updated_at) VALUES ('current', ?1, ?2)",
+                params![last.3, updated_at],
+            ).ok();
+        }
+    }
+    fs::rename(&old_db_path, old_db_path.with_extension("db.migrated")).ok();
+}
+
+// ── Tauri 命令 ──
+
+#[tauri::command]
+fn get_data_root() -> String {
+    data_root().to_string_lossy().to_string()
+}
+
+#[tauri::command]
+fn create_note(state: State<AppState>) -> Result<String, String> {
+    let id = Uuid::new_v4().to_string();
+    let now = Utc::now().timestamp_millis();
+    ensure_note_dirs(&id);
+    init_note_content_db(&id);
+    init_note_timeline_db(&id);
+    let db = state.index_db.lock().unwrap();
+    db.execute(
+        "INSERT INTO notes (id, created_at, updated_at, title, preview) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![id, now, now, "新笔记", "开始编写内容..."],
+    ).map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
+#[tauri::command]
+fn save_event(state: State<AppState>, note_id: String, operation_type: String, delta_json: String, title: String, preview: String) -> Result<(), String> {
+    let event_id = Uuid::new_v4().to_string();
+    let now = Utc::now().timestamp_millis();
+    let timeline_db = init_note_timeline_db(&note_id);
+    timeline_db.execute(
+        "INSERT INTO events (id, timestamp, operation_type, delta_json) VALUES (?1, ?2, ?3, ?4)",
+        params![event_id, now, operation_type, delta_json],
+    ).map_err(|e| e.to_string())?;
+    let idx = state.index_db.lock().unwrap();
+    idx.execute(
+        "UPDATE notes SET updated_at = ?1, title = ?2, preview = ?3 WHERE id = ?4",
+        params![now, title, preview, note_id],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn save_content(note_id: String, delta_json: String) -> Result<(), String> {
+    let now = Utc::now().timestamp_millis();
+    let content_db = init_note_content_db(&note_id);
+    content_db.execute(
+        "INSERT OR REPLACE INTO content (id, delta_json, updated_at) VALUES ('current', ?1, ?2)",
+        params![delta_json, now],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn get_content(note_id: String) -> Result<String, String> {
+    let content_db = init_note_content_db(&note_id);
+    match content_db.query_row("SELECT delta_json FROM content WHERE id = 'current'", [], |row| row.get(0)) {
+        Ok(json) => Ok(json),
+        Err(_) => Ok(String::new()),
+    }
+}
+
+#[tauri::command]
+fn get_notes(state: State<AppState>) -> Result<Vec<Note>, String> {
+    let db = state.index_db.lock().unwrap();
+    let mut stmt = db.prepare("SELECT id, created_at, updated_at, title, preview, folder_id, COALESCE(background, 'default') FROM notes WHERE is_archived = 0 ORDER BY updated_at DESC").unwrap();
+    let notes = stmt.query_map([], |row| {
+        Ok(Note { id: row.get(0)?, created_at: row.get(1)?, updated_at: row.get(2)?, title: row.get(3)?, preview: row.get(4)?, folder_id: row.get(5).ok(), background: row.get(6)? })
+    }).map_err(|e| e.to_string())?.filter_map(Result::ok).collect();
+    Ok(notes)
+}
+
+#[tauri::command]
+fn get_archived_notes(state: State<AppState>) -> Result<Vec<Note>, String> {
+    let db = state.index_db.lock().unwrap();
+    let mut stmt = db.prepare("SELECT id, created_at, updated_at, title, preview, folder_id, COALESCE(background, 'default') FROM notes WHERE is_archived = 1 ORDER BY updated_at DESC").unwrap();
+    let notes = stmt.query_map([], |row| {
+        Ok(Note { id: row.get(0)?, created_at: row.get(1)?, updated_at: row.get(2)?, title: row.get(3)?, preview: row.get(4)?, folder_id: row.get(5).ok(), background: row.get(6)? })
+    }).map_err(|e| e.to_string())?.filter_map(Result::ok).collect();
+    Ok(notes)
+}
+
+#[tauri::command]
+fn get_total_notes_count(state: State<AppState>) -> Result<i64, String> {
+    let db = state.index_db.lock().unwrap();
+    let count: i64 = db.query_row("SELECT COUNT(*) FROM notes", [], |row| row.get(0)).unwrap_or(0);
+    Ok(count)
+}
+
+#[tauri::command]
+fn archive_note(state: State<AppState>, note_id: String) -> Result<(), String> {
+    let db = state.index_db.lock().unwrap();
+    db.execute("UPDATE notes SET is_archived = 1 WHERE id = ?1", params![note_id]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn unarchive_note(state: State<AppState>, note_id: String) -> Result<(), String> {
+    let db = state.index_db.lock().unwrap();
+    db.execute("UPDATE notes SET is_archived = 0 WHERE id = ?1", params![note_id]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn set_note_background(state: State<AppState>, note_id: String, background: String) -> Result<(), String> {
+    let db = state.index_db.lock().unwrap();
+    db.execute("UPDATE notes SET background = ?1 WHERE id = ?2", params![background, note_id]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_note(state: State<AppState>, note_id: String) -> Result<(), String> {
+    let db = state.index_db.lock().unwrap();
+    db.execute("DELETE FROM notes WHERE id = ?1", params![&note_id]).map_err(|e| e.to_string())?;
+    let dir = note_dir(&note_id);
+    if dir.exists() {
+        fs::remove_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn get_events(note_id: String) -> Result<Vec<NoteEvent>, String> {
+    let timeline_db = init_note_timeline_db(&note_id);
+    let mut stmt = timeline_db.prepare("SELECT id, timestamp, operation_type, delta_json FROM events ORDER BY timestamp ASC")
+        .map_err(|e| e.to_string())?;
+    let nid = note_id.clone();
+    let events = stmt.query_map([], |row| {
+        Ok(NoteEvent { id: row.get(0)?, note_id: nid.clone(), timestamp: row.get(1)?, operation_type: row.get(2)?, delta_json: row.get(3)? })
+    }).map_err(|e| e.to_string())?.filter_map(Result::ok).collect();
+    Ok(events)
+}
+
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use serde_json::json;
+
+fn compute_file_hash(bytes: &[u8]) -> String {
+    let mut hasher = DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    format!("{:016x}_{}", hasher.finish(), bytes.len())
+}
+
+/// 从本地文件路径复制媒体到笔记数据目录，返回相对路径
+#[tauri::command]
+fn copy_media_to_note(note_id: String, source_path: String, media_type: String) -> Result<serde_json::Value, String> {
+    let src = Path::new(&source_path);
+    let bytes = fs::read(src).map_err(|e| e.to_string())?;
+    let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("bin");
+    let hash_name = format!("{}.{}", compute_file_hash(&bytes), ext);
+    let sub = match media_type.as_str() { "image" => "images", "video" => "videos", "audio" => "audio", _ => "files" };
+    let dir = note_dir(&note_id).join(sub);
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    
+    let dest_path = dir.join(&hash_name);
+    if !dest_path.exists() {
+        fs::write(&dest_path, &bytes).map_err(|e| e.to_string())?;
+    }
+    
+    Ok(json!({
+        "path": format!("{}/{}", sub, hash_name),
+        "size": bytes.len()
+    }))
+}
+
+/// 从 base64 data URL 保存媒体到笔记数据目录，返回相对路径
+#[tauri::command]
+fn save_media_base64(note_id: String, media_type: String, file_name: String, base64_data: String) -> Result<serde_json::Value, String> {
+    let raw = if let Some(pos) = base64_data.find(',') { &base64_data[pos + 1..] } else { &base64_data };
+    let bytes = STANDARD.decode(raw).map_err(|e| e.to_string())?;
+    let ext = Path::new(&file_name).extension().and_then(|e| e.to_str()).unwrap_or("bin");
+    let hash_name = format!("{}.{}", compute_file_hash(&bytes), ext);
+    let sub = match media_type.as_str() { "image" => "images", "video" => "videos", "audio" => "audio", _ => "files" };
+    let dir = note_dir(&note_id).join(sub);
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    
+    let dest_path = dir.join(&hash_name);
+    if !dest_path.exists() {
+        fs::write(&dest_path, &bytes).map_err(|e| e.to_string())?;
+    }
+    
+    Ok(json!({
+        "path": format!("{}/{}", sub, hash_name),
+        "size": bytes.len()
+    }))
+}
+
+#[derive(serde::Serialize)]
+struct OrphanedFile {
+    note_id: String,
+    note_title: String,
+    path: String,
+    rel_path: String,
+    size: u64,
+    preview_text: Option<String>,
+}
+
+#[tauri::command]
+fn get_note_orphaned_files(note_id: String) -> Result<Vec<OrphanedFile>, String> {
+    let mut orphaned = Vec::new();
+    let dir = note_dir(&note_id);
+    if !dir.exists() { return Ok(orphaned); }
+    
+    let mut referenced_paths = std::collections::HashSet::new();
+    
+    // Check current content
+    let content_db = init_note_content_db(&note_id);
+    if let Ok(json_str) = content_db.query_row::<String, _, _>("SELECT delta_json FROM content WHERE id = 'current'", [], |row| row.get(0)) {
+        extract_media_paths(&json_str, &mut referenced_paths);
+    }
+    
+    // Scan subdirectories: images, videos, audio, files
+    let subs = ["images", "videos", "audio", "files"];
+    for sub in subs.iter() {
+        let sub_dir = dir.join(sub);
+        if sub_dir.exists() {
+            if let Ok(entries) = fs::read_dir(sub_dir) {
+                for entry in entries.filter_map(Result::ok) {
+                    if let Ok(file_type) = entry.file_type() {
+                        if file_type.is_file() {
+                            let file_name = entry.file_name().to_string_lossy().into_owned();
+                            let rel_str = format!("{}/{}", sub, file_name);
+                            if !referenced_paths.contains(&rel_str) {
+                                let mut preview_text = None;
+                                if *sub == "files" {
+                                    if let Some(ext) = entry.path().extension().and_then(|s| s.to_str()) {
+                                        let ext_lower = ext.to_lowercase();
+                                        if ["txt", "md", "json", "csv", "xml", "html", "css", "js", "rs", "py", "c", "cpp", "h"].contains(&ext_lower.as_str()) {
+                                            if let Ok(mut f) = std::fs::File::open(entry.path()) {
+                                                use std::io::Read;
+                                                let mut buf = [0; 256];
+                                                if let Ok(n) = f.read(&mut buf) {
+                                                    let s = String::from_utf8_lossy(&buf[..n]).to_string();
+                                                    preview_text = Some(s.chars().take(40).collect());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                orphaned.push(OrphanedFile {
+                                    note_id: note_id.clone(),
+                                    note_title: String::new(),
+                                    path: entry.path().to_string_lossy().into_owned(),
+                                    rel_path: rel_str,
+                                    size: entry.metadata().map(|m| m.len()).unwrap_or(0),
+                                    preview_text,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    Ok(orphaned)
+}
+
+fn extract_media_paths(json_str: &str, paths: &mut std::collections::HashSet<String>) {
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(json_str) {
+        if let Some(ops) = json.get("ops").and_then(|o| o.as_array()) {
+            for op in ops {
+                if let Some(insert) = op.get("insert").and_then(|i| i.as_object()) {
+                    if let Some(img) = insert.get("image").and_then(|i| i.as_str()) {
+                        paths.insert(img.to_string());
+                    }
+                    if let Some(vid) = insert.get("customVideo").and_then(|v| v.as_str()) {
+                        paths.insert(vid.to_string());
+                    }
+                    if let Some(file) = insert.get("customFile").and_then(|f| f.as_str()) {
+                        if let Ok(file_json) = serde_json::from_str::<serde_json::Value>(file) {
+                            if let Some(p) = file_json.get("path").and_then(|p| p.as_str()) {
+                                paths.insert(p.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[tauri::command]
+fn export_note_backup(note_id: String, save_path: String) -> Result<String, String> {
+    let dir = note_dir(&note_id);
+    if !dir.exists() { return Err("笔记数据目录不存在".to_string()); }
+    let file = fs::File::create(&save_path).map_err(|e| e.to_string())?;
+    let enc = GzEncoder::new(file, Compression::default());
+    let mut tar_builder = tar::Builder::new(enc);
+    tar_builder.append_dir_all(&note_id, &dir).map_err(|e| e.to_string())?;
+    tar_builder.finish().map_err(|e| e.to_string())?;
+    Ok(save_path)
+}
+
+#[tauri::command]
+fn export_all_backup(save_path: String) -> Result<String, String> {
+    let dir = data_root();
+    if !dir.exists() { return Err("数据目录不存在".to_string()); }
+    let file = fs::File::create(&save_path).map_err(|e| e.to_string())?;
+    let mut tar_builder = tar::Builder::new(file);
+    tar_builder.append_dir_all("anchor_notes_data", &dir).map_err(|e| e.to_string())?;
+    tar_builder.finish().map_err(|e| e.to_string())?;
+    Ok(save_path)
+}
+
+#[tauri::command]
+fn open_data_folder(note_id: String) -> Result<(), String> {
+    let dir = note_dir(&note_id);
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    #[cfg(target_os = "windows")]
+    { std::process::Command::new("explorer").arg(dir.to_str().unwrap_or(".")).spawn().map_err(|e| e.to_string())?; }
+    Ok(())
+}
+
+#[tauri::command]
+fn open_file_external(note_id: String, rel_path: String) -> Result<(), String> {
+    let dir = note_dir(&note_id);
+    let path = dir.join(rel_path);
+    if path.exists() {
+        #[cfg(target_os = "windows")]
+        { std::process::Command::new("cmd").args(["/C", "start", "", path.to_str().unwrap_or(".")]).spawn().map_err(|e| e.to_string())?; }
+        Ok(())
+    } else {
+        Err("文件不存在".into())
+    }
+}
+
+#[tauri::command]
+fn delete_orphaned_file(path: String) -> Result<(), String> {
+    let p = Path::new(&path);
+    if p.exists() {
+        fs::remove_file(p).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn get_folders(state: State<AppState>) -> Result<Vec<Folder>, String> {
+    let db = state.index_db.lock().unwrap();
+    let mut stmt = db.prepare("SELECT id, name, created_at FROM folders ORDER BY created_at ASC").unwrap();
+    let folders = stmt.query_map([], |row| {
+        Ok(Folder { id: row.get(0)?, name: row.get(1)?, created_at: row.get(2)? })
+    }).map_err(|e| e.to_string())?.filter_map(Result::ok).collect();
+    Ok(folders)
+}
+
+#[tauri::command]
+fn create_folder(state: State<AppState>, name: String) -> Result<String, String> {
+    let id = Uuid::new_v4().to_string();
+    let now = Utc::now().timestamp_millis();
+    let db = state.index_db.lock().unwrap();
+    db.execute(
+        "INSERT INTO folders (id, name, created_at) VALUES (?1, ?2, ?3)",
+        params![id, name, now],
+    ).map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
+#[tauri::command]
+fn set_note_folder(state: State<AppState>, note_id: String, folder_id: Option<String>) -> Result<(), String> {
+    let db = state.index_db.lock().unwrap();
+    db.execute(
+        "UPDATE notes SET folder_id = ?1 WHERE id = ?2",
+        params![folder_id, note_id],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_folder(state: State<AppState>, folder_id: String) -> Result<(), String> {
+    let db = state.index_db.lock().unwrap();
+    db.execute("UPDATE notes SET folder_id = NULL WHERE folder_id = ?1", params![folder_id]).map_err(|e| e.to_string())?;
+    db.execute("DELETE FROM folders WHERE id = ?1", params![folder_id]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn rename_folder(state: State<AppState>, folder_id: String, new_name: String) -> Result<(), String> {
+    let db = state.index_db.lock().unwrap();
+    db.execute("UPDATE folders SET name = ?1 WHERE id = ?2", params![new_name, folder_id]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[derive(Serialize)]
+struct TaggedWord {
+    word: String,
+    tag: String,
+}
+
+#[tauri::command]
+fn segment_text(state: State<AppState>, text: String) -> Vec<TaggedWord> {
+    let jieba = state.jieba.lock().unwrap();
+    let tagged = jieba.tag(&text, true);
+    tagged.into_iter().map(|t| TaggedWord {
+        word: t.word.to_string(),
+        tag: t.tag.to_string(),
+    }).collect()
+}
+
+#[tauri::command]
+fn get_semantic_cache(note_id: String) -> Result<Option<String>, String> {
+    let dir = note_dir(&note_id);
+    if !dir.exists() { return Ok(None); }
+    let db = Connection::open(dir.join("content.db")).map_err(|e| e.to_string())?;
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS semantic_cache (id TEXT PRIMARY KEY DEFAULT 'current', tags_json TEXT, updated_at INTEGER)",
+        [],
+    ).map_err(|e| e.to_string())?;
+    let result: Result<String, _> = db.query_row(
+        "SELECT tags_json FROM semantic_cache WHERE id = 'current'",
+        [],
+        |row| row.get(0),
+    );
+    match result {
+        Ok(json) => Ok(Some(json)),
+        Err(_) => Ok(None),
+    }
+}
+
+#[tauri::command]
+fn save_semantic_cache(note_id: String, tags_json: String) -> Result<(), String> {
+    let dir = note_dir(&note_id);
+    if !dir.exists() { return Err("Note dir not found".into()); }
+    let db = Connection::open(dir.join("content.db")).map_err(|e| e.to_string())?;
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS semantic_cache (id TEXT PRIMARY KEY DEFAULT 'current', tags_json TEXT, updated_at INTEGER)",
+        [],
+    ).map_err(|e| e.to_string())?;
+    let now = Utc::now().timestamp();
+    db.execute(
+        "INSERT OR REPLACE INTO semantic_cache (id, tags_json, updated_at) VALUES ('current', ?1, ?2)",
+        params![tags_json, now],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn main() {
+    let index_db = init_index_db();
+    migrate_old_db_if_needed(&index_db);
+    let jieba = Jieba::new();
+    tauri::Builder::default()
+        .manage(AppState { index_db: Mutex::new(index_db), jieba: Mutex::new(jieba) })
+        .invoke_handler(tauri::generate_handler![
+            get_data_root, create_note, save_event, save_content, get_content,
+            get_notes, get_archived_notes, archive_note, unarchive_note, delete_note,
+            get_events, copy_media_to_note, save_media_base64,
+            export_note_backup, export_all_backup, open_data_folder, open_file_external, get_note_orphaned_files,
+            delete_orphaned_file,
+            get_folders, create_folder, set_note_folder, delete_folder, rename_folder,
+            set_note_background, segment_text, get_semantic_cache, save_semantic_cache, get_total_notes_count
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}

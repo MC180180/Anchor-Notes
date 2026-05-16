@@ -1,0 +1,23 @@
+# 编译生成目录
+target/
+**/target/
+
+# 运行产生的应用数据和数据库（绝对不能传到Github，包含你的私人笔记和缓存）
+data/
+**/data/
+*.db
+*.db-journal
+anchor_debug.log
+
+# 编译出的可执行文件和打包文件
+*.exe
+*.tar
+*.tar.gz
+*.zip
+
+# 系统与 IDE 缓存
+.DS_Store
+.vscode/
+.idea/
+*.suo
+*.user

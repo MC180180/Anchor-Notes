@@ -1,0 +1,4 @@
+[workspace]
+members = ["anchor_ui","renderer_app"
+]
+resolver = "2"
