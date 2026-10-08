@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8"><title>锚点工作区</title>
-<link href="https://cdn.quilljs.com/1.3.6/quill.snow.css" rel="stylesheet">
+<link href="vendor/quill.snow.css" rel="stylesheet">
 <style>
 :root{--bg:#111;--bar:#161616;--txt:#f0f0f0;--card-bg:rgba(30,30,30,.4);--card-border:rgba(255,255,255,.05);--card-hover:rgba(50,50,50,.6);--card-hover-border:rgba(255,255,255,.15);--txt-muted:#aaa;--bar-btn:rgba(255,255,255,0.1);--bar-btn-hover:rgba(255,255,255,0.2);--accent:#4caf50;--shadow:rgba(0,0,0,0.5);--canvas-op:1;--lock-stroke:rgba(255,255,255,0.4);--lock-glow:rgba(255,255,255,0.8)}
 [data-theme="light"]{--bg:#ffffff;--bar:#f8f8f8;--txt:hsl(var(--theme-hue,0),100%,35%);--card-bg:hsla(var(--theme-hue,0),100%,95%,0.8);--card-border:hsla(var(--theme-hue,0),100%,80%,0.5);--card-hover:hsla(var(--theme-hue,0),100%,90%,0.9);--card-hover-border:hsla(var(--theme-hue,0),100%,70%,0.8);--txt-muted:hsl(var(--theme-hue,0),80%,45%);--bar-btn:hsla(var(--theme-hue,0),100%,90%,1);--bar-btn-hover:hsla(var(--theme-hue,0),100%,80%,1);--accent:hsl(var(--theme-hue,0),100%,50%);--shadow:rgba(0,0,0,0.1);--canvas-op:0;--lock-stroke:hsla(var(--theme-hue,0),100%,35%,0.3);--lock-glow:transparent}
@@ -33,6 +33,83 @@ body::before{content:'';position:absolute;inset:0;background:var(--bg);z-index:-
 .tl-btn{width:auto;padding:0 15px;border-radius:15px;font-size:14px;line-height:30px;text-align:center;display:block;white-space:nowrap;flex-shrink:0}
 #home-view,#edit-view{position:absolute;top:0;left:0;width:100%;height:100%;z-index:5;overflow:hidden}
 #home-view{display:flex;flex-direction:column}
+/* ── 备份选择模式：直接在主界面上点选，亮暗区分选中与否 ── */
+#notes-grid.bk-mode .note-card,
+#notes-grid.bk-mode .folder-card{filter:brightness(.4) saturate(.6);transition:filter .35s cubic-bezier(.4,0,.2,1)}
+#notes-grid.bk-mode .note-card.bk-on,
+#notes-grid.bk-mode .folder-card.bk-on{filter:none}
+#notes-grid.bk-mode .note-card,
+#notes-grid.bk-mode .folder-card{position:relative}
+#notes-grid.bk-mode .note-card:hover{transform:translateY(-3px)}
+/* 选中卡片背景上的竖线：出现是自上而下显形，取消是自上而下消隐 */
+.bk-lines{position:absolute;left:0;top:0;right:0;bottom:0;overflow:hidden;pointer-events:none;z-index:0;border-radius:inherit}
+.bk-line{position:absolute;top:0;bottom:0;width:1px;background:linear-gradient(to bottom,transparent,var(--accent),transparent);opacity:.5;clip-path:inset(0 0 100% 0)}
+@keyframes bkLineIn{from{clip-path:inset(0 0 100% 0)}to{clip-path:inset(0 0 0 0)}}
+@keyframes bkLineOut{from{clip-path:inset(0 0 0 0)}to{clip-path:inset(100% 0 0 0)}}
+.bk-on .bk-line{animation:bkLineIn var(--d) cubic-bezier(.4,0,.2,1) var(--dl) forwards}
+.bk-off .bk-line{animation:bkLineOut var(--d) cubic-bezier(.4,0,.2,1) var(--dl) forwards}
+.bk-bar{position:fixed;left:50%;transform:translateX(-50%);bottom:28px;z-index:60;display:none;align-items:center;gap:12px;
+  background:rgba(25,25,25,.92);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.12);
+  border-radius:30px;padding:10px 18px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
+.bk-bar .bk-count{color:#ddd;font-size:13px;min-width:74px}
+.bk-bar button{padding:7px 16px;border-radius:18px;border:1px solid #555;background:transparent;color:#ccc;cursor:pointer;font-size:13px}
+.bk-bar button:hover{background:rgba(255,255,255,.1)}
+.bk-bar button.primary{background:#4caf50;border-color:#4caf50;color:#fff;font-weight:bold}
+/* ── 导入冲突：左现有 → 右新版，按钮在最右 ── */
+.imp-row{display:flex;gap:20px;align-items:stretch;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:18px 20px}
+.imp-main{flex:1;min-width:0}
+.imp-pair{display:grid;grid-template-columns:minmax(0,1fr) 64px minmax(0,1fr);align-items:center}
+.imp-cap{display:flex;align-items:center;gap:8px;color:#888;font-size:12px;margin-bottom:8px;min-height:22px}
+.imp-cap b{color:#ccc;font-weight:600}
+.imp-nav{display:inline-flex;align-items:center;gap:4px;margin-left:auto}
+.imp-nav button{width:22px;height:22px;border-radius:50%;border:1px solid #555;background:transparent;color:#ccc;cursor:pointer;line-height:1;padding:0;font-size:12px}
+.imp-nav button:hover:not(:disabled){background:rgba(255,255,255,.12)}
+.imp-nav button:disabled{opacity:.3;cursor:default}
+.imp-card{background:var(--card-bg);border:1px solid var(--card-border);border-radius:12px;padding:16px 18px;height:132px;overflow:hidden;display:flex;flex-direction:column;position:relative;cursor:default}
+.imp-card.is-new{border-color:rgba(76,175,80,.5);box-shadow:0 0 0 1px rgba(76,175,80,.15)}
+.imp-card h3{margin:0 0 6px;font-size:18px;color:var(--txt);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.imp-card p{margin:0;font-size:13px;color:var(--txt-muted);line-height:1.5;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.imp-card .imp-foot{margin-top:auto;font-size:11px;color:var(--txt-muted);display:flex;gap:10px;flex-wrap:wrap}
+.imp-tag{position:absolute;top:10px;right:12px;font-size:11px;padding:1px 8px;border-radius:10px;background:rgba(255,183,77,.15);color:#ffb74d}
+.imp-arrow{display:flex;justify-content:center;color:#4caf50}
+.imp-arrow svg{width:36px;height:36px;filter:drop-shadow(0 0 6px rgba(76,175,80,.5))}
+.imp-bar{margin-top:16px}
+.imp-bar-head{display:flex;justify-content:space-between;font-size:11px;color:#777;margin-bottom:6px}
+.imp-track{position:relative;height:10px;background:#242424;border-radius:5px;overflow:hidden}
+.imp-fill{position:absolute;top:0;bottom:0;width:0;transition:width .6s cubic-bezier(.4,0,.2,1)}
+.imp-fill.neg{right:50%;background:linear-gradient(to left,#ef5350,#b71c1c);border-radius:5px 0 0 5px}
+.imp-fill.pos{left:50%;background:linear-gradient(to right,#66bb6a,#2e7d32);border-radius:0 5px 5px 0}
+.imp-mid{position:absolute;left:50%;top:-2px;bottom:-2px;width:2px;background:#bbb;transform:translateX(-1px);z-index:2}
+.imp-tick{position:absolute;top:0;bottom:0;width:1px;background:rgba(255,255,255,.14);z-index:1}
+.imp-scale{position:relative;height:14px;margin-top:3px;font-size:10px;color:#666}
+.imp-scale span{position:absolute;transform:translateX(-50%);white-space:nowrap}
+.imp-delta{margin-top:6px;font-size:12px;color:#aaa;display:flex;gap:14px;flex-wrap:wrap;align-items:center}
+.imp-delta .up{color:#81c784}.imp-delta .down{color:#e57373}.imp-delta .same{color:#888}
+.imp-chip{padding:1px 8px;border-radius:10px;font-size:11px;background:rgba(255,255,255,.07);color:#bbb}
+.imp-chip.up{background:rgba(76,175,80,.15);color:#81c784}
+.imp-chip.down{background:rgba(244,67,54,.15);color:#e57373}
+.imp-difflink{margin-left:auto;color:#64b5f6;cursor:pointer;font-size:12px;user-select:none}
+.imp-difflink:hover{text-decoration:underline}
+.imp-actions-col{display:flex;flex-direction:column;justify-content:center;gap:10px;width:200px;flex:0 0 200px}
+.imp-btn{padding:10px 14px;border-radius:8px;border:1px solid #555;background:transparent;color:#ccc;cursor:pointer;font-size:13px;text-align:left;transition:.2s}
+.imp-btn:hover{background:rgba(255,255,255,.1)}
+.imp-btn.on{background:#4caf50;border-color:#4caf50;color:#fff}
+.imp-btn.on.danger{background:#d32f2f;border-color:#d32f2f}
+.imp-btn small{display:block;font-size:11px;opacity:.75;margin-top:2px}
+.imp-diff{margin-top:14px;border:1px solid rgba(255,255,255,.1);border-radius:10px;overflow:hidden;background:#101010}
+.imp-diff-head{display:flex;gap:14px;align-items:center;padding:8px 12px;font-size:12px;color:#aaa;border-bottom:1px solid rgba(255,255,255,.08);background:#161616}
+.imp-diff-body{max-height:420px;overflow:auto;font:12.5px/1.65 'Consolas','Courier New',monospace}
+.df-line{display:flex;white-space:pre-wrap;word-break:break-all}
+.df-no{flex:0 0 46px;text-align:right;padding-right:8px;color:#555;user-select:none}
+.df-sign{flex:0 0 22px;text-align:center;user-select:none}
+.df-text{flex:1;padding-right:12px}
+.df-ins{background:rgba(76,175,80,.16);color:#b9f6ca}.df-ins .df-sign{color:#66bb6a}
+.df-del{background:rgba(244,67,54,.16);color:#ffcdd2}.df-del .df-sign{color:#ef5350}
+.df-eq{color:#9e9e9e}
+.df-fold{padding:3px 12px;text-align:center;color:#64b5f6;background:#171717;cursor:pointer;font-size:12px;user-select:none}
+.df-fold:hover{background:#1e1e1e}
+.df-meta{background:#1a1a1a;color:#b0bec5;padding:2px 12px}
+.df-embed{color:#ffb74d;background:rgba(255,183,77,.12);border-radius:3px;padding:0 3px}
 #notes-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:25px;padding:40px 10%;width:100%;overflow-y:auto;flex:1;margin-top:60px;margin-bottom:40px}
 .note-card{background:var(--card-bg);backdrop-filter:blur(10px);border-radius:12px;padding:24px;cursor:pointer;transition:.3s;border:1px solid var(--card-border);height:200px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 4px 15px var(--shadow)}
 .note-card:hover{transform:translateY(-5px);background:var(--card-hover);border-color:var(--card-hover-border)}
@@ -56,7 +133,10 @@ body::before{content:'';position:absolute;inset:0;background:var(--bg);z-index:-
 .fab.expanding::before,.fab.expanding::after{opacity:0}
 .fab::before{width:28px;height:3px}
 .fab::after{width:3px;height:28px}
-#editor-container{position:absolute;top:120px;bottom:40px;left:0;right:0;padding:0 10%;overflow-y:auto;transition:right .3s,bottom .3s}
+/* height:auto 必须显式写出：Quill 自带的 .ql-container{height:100%} 会压过 top/bottom，
+   把编辑区撑成父容器满高、底部越界 160px 被 #edit-view 的 overflow:hidden 裁掉，
+   导致底部内容滚不到、且与行号层（按 top/bottom 正确取高）错位 */
+#editor-container{position:absolute;top:120px;bottom:40px;height:auto;left:0;right:0;padding:0 10%;overflow-y:auto;transition:right .3s,bottom .3s}
 #timeline-panel{position:absolute;right:-350px;top:60px;bottom:40px;width:350px;background:rgba(15,15,15,.95);border-left:1px solid #333;transition:right .3s;z-index:20;display:flex;flex-direction:column;box-shadow:-5px 0 20px rgba(0,0,0,.5);backdrop-filter:blur(10px);user-select:none}
 #timeline-panel.open{right:0}
 .tl-header{padding:20px;border-bottom:1px solid #333;display:flex;justify-content:space-between;align-items:center;font-size:18px;font-weight:bold}
@@ -182,6 +262,18 @@ body::before{content:'';position:absolute;inset:0;background:var(--bg);z-index:-
 .f-menu-title{padding:8px 15px;font-size:12px;color:#888;border-bottom:1px solid #333;margin-bottom:5px}
 .f-menu-item{padding:8px 15px;font-size:14px;color:#ccc;cursor:pointer;transition:0.2s}
 .f-menu-item:hover{background:#333;color:#fff}
+@keyframes dlgOverlayIn{from{opacity:0}to{opacity:1}}
+@keyframes dlgOverlayOut{from{opacity:1}to{opacity:0}}
+@keyframes dlgBoxIn{from{opacity:0;transform:translateY(16px) scale(.94)}to{opacity:1;transform:none}}
+@keyframes dlgBoxOut{from{opacity:1;transform:none}to{opacity:0;transform:translateY(10px) scale(.96)}}
+#custom-dialog-overlay.dlg-open{animation:dlgOverlayIn .24s cubic-bezier(.4,0,.2,1) both}
+#custom-dialog-overlay.dlg-open #custom-dialog-box{animation:dlgBoxIn .3s cubic-bezier(.4,0,.2,1) both}
+#custom-dialog-overlay.dlg-close{animation:dlgOverlayOut .2s cubic-bezier(.4,0,.2,1) both}
+#custom-dialog-overlay.dlg-close #custom-dialog-box{animation:dlgBoxOut .2s cubic-bezier(.4,0,.2,1) both}
+.dlg-choice{padding:8px 18px;background:transparent;border:1px solid #444;color:#ccc;border-radius:6px;cursor:pointer;font-size:14px;transition:.2s;outline:none}
+.dlg-choice:hover{background:rgba(255,255,255,.1);color:#fff}
+.dlg-choice.primary{background:#4caf50;border-color:#4caf50;color:#fff;font-weight:bold}
+.dlg-choice.primary:hover{background:#66bb6a}
 #custom-dialog-cancel:hover{background:rgba(255,255,255,0.1) !important;color:#fff !important}
 .card-ash-canvas{position:absolute;top:0;left:0;width:100%;height:100%;z-index:-1;border-radius:10px;pointer-events:none}
 #custom-dialog-confirm:hover{background:#66bb6a !important}
@@ -271,6 +363,7 @@ body.glitch-mode #home-view * {
         </div>
       </div>
       <div class="tl-btn" id="home-backup-btn" title="将所有笔记和数据打包备份">全局备份</div>
+      <div class="tl-btn" id="home-import-btn" title="从备份文件导入笔记（不会覆盖现有笔记）">导入备份</div>
       <div class="tl-btn" id="home-archive-toggle" title="进入或退出归档区">进入归档区</div>
       <div class="window-controls">
         <div class="wc-btn" onclick="window.__TAURI__.window.appWindow.minimize()"><svg viewBox="0 0 10 1" width="12" height="1"><rect width="10" height="1" fill="currentColor"/></svg></div>
@@ -299,6 +392,7 @@ body.glitch-mode #home-view * {
     <div class="right-controls">
       <div class="tl-btn" id="edit-orphans-btn" title="清理本笔记中未被调用的数据文件">无索引数据</div>
       <div class="tl-btn" id="encrypt-note-btn" title="为当前笔记加密">加密</div>
+      <div class="tl-btn" id="change-pwd-btn" style="display:none" title="修改当前笔记的加密密码">改密码</div>
       <div class="tl-btn" id="lock-status-btn" style="display:none; color:#fff; filter:drop-shadow(0 0 5px rgba(255,255,255,0.6));" title="已解锁，退出时自动重新上锁"><div style="display:flex; align-items:center; gap:4px;"><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 3 21 12 12 21 3 12"></polygon></svg> <span>已解锁</span></div></div>
       <div class="tl-btn" id="archive-note-btn" title="双击归档此笔记">归档</div>
       <div class="tl-btn" id="unarchive-note-btn" style="display:none" title="取消归档">取消归档</div>
@@ -396,8 +490,35 @@ body.glitch-mode #home-view * {
   </div>
 </div>
 
-<script src="https://cdn.quilljs.com/1.3.6/quill.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script src="vendor/quill.min.js"></script>
+<script src="vendor/html2canvas.min.js"></script>
+<div class="bk-bar" id="bk-bar">
+    <span class="bk-count" id="bk-count">已选 0 篇</span>
+    <button id="bk-all">全选</button>
+    <button id="bk-none">全不选</button>
+    <button id="bk-archive-toggle">查看归档区</button>
+    <button id="bk-go" class="primary">开始备份</button>
+    <button id="bk-cancel">取消</button>
+</div>
+
+<!-- 导入冲突处理 -->
+<div id="import-conflict-overlay" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.88);z-index:10000;backdrop-filter:blur(10px);flex-direction:column">
+    <div class="preview-bar">
+        <span>导入备份 — 发现标题相似的笔记</span>
+        <div style="display:flex;align-items:center;gap:10px">
+            <span id="import-conflict-count" style="color:#aaa;font-size:13px"></span>
+            <button class="preview-close-btn" id="import-conflict-go" style="background:#4caf50">确认导入</button>
+            <button class="preview-close-btn" id="import-conflict-cancel">取消</button>
+        </div>
+    </div>
+    <div style="flex:1;overflow-y:auto;padding:24px 6%">
+        <div style="color:#888;font-size:13px;margin-bottom:18px;line-height:1.7">
+            下面这些笔记和现有笔记标题相近。选择「替换」时，<b style="color:#ffb74d">旧笔记不会被删除，只会移入归档区</b>，误操作可以从归档区找回。
+        </div>
+        <div id="import-conflict-list" style="display:flex;flex-direction:column;gap:14px"></div>
+    </div>
+</div>
+
 <div id="orphans-overlay" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:9999;backdrop-filter:blur(8px);flex-direction:column">
     <div class="preview-bar">
         <span>无索引数据 (本笔记中未被引用的闲置文件)</span>
@@ -427,6 +548,17 @@ var allNotesCache = [];
 
 // 初始化数据根目录
 invoke('get_data_root').then(function(root) { noteDataRoot = root; });
+
+// 笔记正文、标题、文件名都会被拼进 innerHTML。不转义的话，在笔记里正常打出
+// <img src=x onerror=...> 这样的文本就会被当作 HTML 执行，而本页持有全部 Tauri API。
+function escapeHtml(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
 
 // 将相对路径 (images/abc.png) 解析为 Tauri custom protocol URL
 // Windows WebView2 要求自定义协议使用 https://<scheme>.localhost/ 格式
@@ -1066,7 +1198,7 @@ class CustomFile extends Embed {
             sizeStr = '<span style="color:#888;font-size:11px;margin-left:6px">' + sizeStr + '</span>';
         }
         
-        node.innerHTML = '<div style="display:flex;align-items:center;transform:translateY(-1px)"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg><span style="font-size:13px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1">' + data.name + '</span>' + sizeStr + '</div>';
+        node.innerHTML = '<div style="display:flex;align-items:center;transform:translateY(-1px)"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg><span style="font-size:13px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1">' + escapeHtml(data.name) + '</span>' + escapeHtml(sizeStr) + '</div>';
         
         node.setAttribute('data-file-path', data.path);
         node.setAttribute('data-file-name', data.name);
@@ -1244,6 +1376,7 @@ document.getElementById('orphans-close-btn').addEventListener('click', function(
 
 // ====== 语音录制逻辑 ======
 var audioMediaRecorder = null;
+var audioCancelled = false;
 var audioChunks = [];
 var audioStream = null;
 var audioTimer = null;
@@ -1306,6 +1439,7 @@ document.querySelector('.ql-audioRecord').addEventListener('click', function(e) 
 });
 
 document.getElementById('audio-cancel-btn').addEventListener('click', function() {
+    audioCancelled = true;
     if (audioMediaRecorder && audioMediaRecorder.state === 'recording') {
         audioMediaRecorder.stop();
     }
@@ -1320,6 +1454,7 @@ document.getElementById('audio-start-btn').addEventListener('click', function() 
     
     navigator.mediaDevices.getUserMedia(constraints).then(function(stream) {
         audioStream = stream;
+        audioCancelled = false;
         audioChunks = [];
         audioMediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
         
@@ -1354,7 +1489,8 @@ document.getElementById('audio-start-btn').addEventListener('click', function() 
         
         audioMediaRecorder.onstop = function() {
             clearInterval(audioTimer);
-            if (audioChunks.length === 0) return; // 取消的情况
+            if (audioCancelled) { audioChunks = []; return; }
+            if (audioChunks.length === 0) return;
             var blob = new Blob(audioChunks, { type: 'audio/webm' });
             var reader = new FileReader();
             reader.readAsDataURL(blob);
@@ -1403,46 +1539,548 @@ document.getElementById('audio-stop-btn').addEventListener('click', function() {
 
 // 全局备份
 var isGlobalBackingUp = false;
-document.getElementById('home-backup-btn').addEventListener('click', function() {
-    if (isGlobalBackingUp) return;
-    
-    invoke('get_total_notes_count').then(function(count) {
-        var d = new Date();
-        var dateStr = d.getFullYear() + 
-                      ('0'+(d.getMonth()+1)).slice(-2) + 
-                      ('0'+d.getDate()).slice(-2) + '_' + 
-                      ('0'+d.getHours()).slice(-2) + 
-                      ('0'+d.getMinutes()).slice(-2) + 
-                      ('0'+d.getSeconds()).slice(-2);
-        
-        var defaultName = 'backup_' + count + 'notes_' + dateStr + '.tar';
-        
-        window.__TAURI__.dialog.save({
-            defaultPath: defaultName,
-            filters: [{ name: 'Tar Archive', extensions: ['tar'] }]
-        }).then(function(savePath) {
-            if (savePath) {
-                isGlobalBackingUp = true;
-                var btn = document.getElementById('home-backup-btn');
-                var originalText = btn.innerText;
-                btn.innerText = '正在打包...';
-                btn.style.opacity = '0.5';
-                
-                invoke('export_all_backup', { savePath: savePath })
-                .then(function(path) {
-                    alert('全局备份成功！文件已保存至：\n' + path);
-                })
-                .catch(function(err) {
-                    alert('备份失败：' + err);
-                })
-                .finally(function() {
-                    isGlobalBackingUp = false;
-                    btn.innerText = originalText;
-                    btn.style.opacity = '1';
-                });
-            }
+// ── 备份选择模式 ──
+// 不另开界面，直接让主界面的卡片可点选：暗的不备份、亮的备份，
+// 选中的卡片背景会浮起一组竖线（自上而下显形，取消时自上而下消隐）。
+var backupMode = false;
+var bkSelected = {};
+
+function bkLineLayer(card) {
+    var layer = card.querySelector('.bk-lines');
+    if (layer) return layer;
+    layer = document.createElement('div');
+    layer.className = 'bk-lines';
+    // 位置、粗细、速度、延迟都随机，避免整齐划一显得死板
+    var n = 5 + Math.floor(Math.random() * 4);
+    for (var i = 0; i < n; i++) {
+        var line = document.createElement('div');
+        line.className = 'bk-line';
+        line.style.left = (6 + Math.random() * 88).toFixed(1) + '%';
+        line.style.width = (Math.random() < 0.3 ? 2 : 1) + 'px';
+        line.style.opacity = (0.28 + Math.random() * 0.4).toFixed(2);
+        line.style.setProperty('--d', (0.45 + Math.random() * 0.75).toFixed(2) + 's');
+        line.style.setProperty('--dl', (Math.random() * 0.22).toFixed(2) + 's');
+        layer.appendChild(line);
+    }
+    card.insertBefore(layer, card.firstChild);
+    return layer;
+}
+
+function bkApplyCard(card, on, animate) {
+    if (!card) return;
+    bkLineLayer(card);
+    card.classList.remove('bk-on', 'bk-off');
+    if (on) {
+        card.classList.add('bk-on');
+    } else if (animate) {
+        card.classList.add('bk-off');
+    }
+    // 不带动画时（重新渲染后恢复状态）直接落到终态，避免整屏重放一遍动画
+    if (!animate) {
+        card.querySelectorAll('.bk-line').forEach(function (l) {
+            l.style.animation = 'none';
+            l.style.clipPath = on ? 'inset(0 0 0 0)' : 'inset(0 0 100% 0)';
+        });
+    } else {
+        card.querySelectorAll('.bk-line').forEach(function (l) { l.style.animation = ''; l.style.clipPath = ''; });
+    }
+}
+
+function bkUpdateCount() {
+    var n = Object.keys(bkSelected).filter(function (k) { return bkSelected[k]; }).length;
+    var el = document.getElementById('bk-count');
+    if (el) el.innerText = '已选 ' + n + ' 篇';
+    return n;
+}
+
+function bkToggleNote(noteId, card) {
+    bkSelected[noteId] = !bkSelected[noteId];
+    bkApplyCard(card, bkSelected[noteId], true);
+    bkUpdateCount();
+}
+
+// 文件夹整组点选：组内所有笔记一起切换
+function bkToggleFolder(folderCard, folderId) {
+    var notes = (allNotesCache || []).filter(function (n) { return n.folder_id === folderId; });
+    var allOn = notes.length > 0 && notes.every(function (n) { return bkSelected[n.id]; });
+    notes.forEach(function (n) {
+        bkSelected[n.id] = !allOn;
+        bkApplyCard(document.getElementById('note-card-' + n.id), !allOn, true);
+    });
+    bkApplyCard(folderCard, !allOn, true);
+    bkUpdateCount();
+}
+
+// 每次重新渲染主界面后，把选中状态还原到卡片上
+function bkRefreshVisuals() {
+    var grid = document.getElementById('notes-grid');
+    if (!grid) return;
+    if (!backupMode) { grid.classList.remove('bk-mode'); return; }
+    grid.classList.add('bk-mode');
+    (allNotesCache || []).forEach(function (n) {
+        bkApplyCard(document.getElementById('note-card-' + n.id), !!bkSelected[n.id], false);
+    });
+    document.querySelectorAll('#notes-grid .folder-card').forEach(function (fc) {
+        var fid = fc.getAttribute('data-folder-id');
+        var notes = (allNotesCache || []).filter(function (n) { return n.folder_id === fid; });
+        var allOn = notes.length > 0 && notes.every(function (n) { return bkSelected[n.id]; });
+        bkApplyCard(fc, allOn, false);
+    });
+    bkUpdateCount();
+}
+
+function enterBackupMode() {
+    backupMode = true;
+    bkSelected = {};
+    document.getElementById('bk-bar').style.display = 'flex';
+    // 默认全选：活跃 + 归档一起算上，切到归档区也能继续挑
+    Promise.all([invoke('get_notes'), invoke('get_archived_notes')]).then(function (res) {
+        (res[0] || []).concat(res[1] || []).forEach(function (n) { bkSelected[n.id] = true; });
+        bkRefreshVisuals();
+    });
+    bkRefreshVisuals();
+}
+
+function exitBackupMode() {
+    backupMode = false;
+    bkSelected = {};
+    document.getElementById('bk-bar').style.display = 'none';
+    var grid = document.getElementById('notes-grid');
+    if (grid) grid.classList.remove('bk-mode');
+    document.querySelectorAll('.bk-lines').forEach(function (l) { l.remove(); });
+    document.querySelectorAll('.bk-on,.bk-off').forEach(function (c) { c.classList.remove('bk-on', 'bk-off'); });
+    if (showingArchived) { document.getElementById('home-archive-toggle').click(); }
+}
+
+document.getElementById('home-backup-btn').addEventListener('click', function () {
+    if (backupMode) { exitBackupMode(); return; }
+    enterBackupMode();
+});
+document.getElementById('bk-cancel').addEventListener('click', exitBackupMode);
+
+document.getElementById('bk-all').addEventListener('click', function () {
+    Promise.all([invoke('get_notes'), invoke('get_archived_notes')]).then(function (res) {
+        (res[0] || []).concat(res[1] || []).forEach(function (n) { bkSelected[n.id] = true; });
+        bkRefreshVisuals();
+        (allNotesCache || []).forEach(function (n) {
+            bkApplyCard(document.getElementById('note-card-' + n.id), true, true);
         });
     });
+});
+document.getElementById('bk-none').addEventListener('click', function () {
+    (allNotesCache || []).forEach(function (n) {
+        if (bkSelected[n.id]) bkApplyCard(document.getElementById('note-card-' + n.id), false, true);
+    });
+    bkSelected = {};
+    document.querySelectorAll('#notes-grid .folder-card').forEach(function (fc) { bkApplyCard(fc, false, true); });
+    bkUpdateCount();
+});
+document.getElementById('bk-archive-toggle').addEventListener('click', function () {
+    document.getElementById('home-archive-toggle').click();
+    this.innerText = showingArchived ? '返回活跃区' : '查看归档区';
+});
+
+document.getElementById('bk-go').addEventListener('click', function () {
+    var ids = Object.keys(bkSelected).filter(function (k) { return bkSelected[k]; });
+    if (!ids.length) { customDialog({ title: '提示', message: '请至少选择一篇笔记。' }); return; }
+    var d = new Date();
+    var pad = function (v) { return ('0' + v).slice(-2); };
+    var stamp = d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '_' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds());
+    window.__TAURI__.dialog.save({
+        defaultPath: 'backup_' + ids.length + 'notes_' + stamp + '.tar',
+        filters: [{ name: 'Tar Archive', extensions: ['tar'] }]
+    }).then(function (savePath) {
+        if (!savePath) return;
+        var btn = document.getElementById('bk-go');
+        btn.innerText = '打包中...';
+        invoke('export_selected_backup', { savePath: savePath, noteIds: ids }).then(function (n) {
+            btn.innerText = '开始备份';
+            exitBackupMode();
+            customDialog({ title: '备份完成', message: '已备份 ' + n + ' 篇笔记到：\n' + savePath });
+        }).catch(function (e) {
+            btn.innerText = '开始备份';
+            customDialog({ title: '备份失败', message: '' + e });
+        });
+    });
+});
+
+// ── 导入：先扫描，有标题相似的就让用户逐篇决定 ──
+var importSession = null;
+var importDecisions = {};
+
+// ── 导入冲突界面 ──
+// 每一对：左边现有笔记 → 右边备份里的新版，按钮在最右；下面是对数刻度的变化条，
+// 可展开类似代码 diff 的 + / - 差异（文字、格式、图片/视频/音频/文件都会体现）。
+
+var IMP_LOG_MAX = 100000;   // 条的满格对应 10 万字的变化量
+
+function impFmtTime(ms) {
+    if (!ms) return '-';
+    var d = new Date(ms), p = function (v) { return ('0' + v).slice(-2); };
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
+function impFmtNum(n) { return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+
+function impStatsLine(st) {
+    if (!st) return '';
+    var parts = [impFmtNum(st.chars) + ' 字' + (st.media_chars ? '（含媒体折合 ' + impFmtNum(st.media_chars) + '）' : '')];
+    if (st.images) parts.push('图 ' + st.images);
+    if (st.videos) parts.push('视频 ' + st.videos);
+    if (st.audio) parts.push('音频 ' + st.audio);
+    if (st.files) parts.push('文件 ' + st.files);
+    return parts.join(' · ');
+}
+
+function impCard(info, isNew) {
+    var c = document.createElement('div');
+    c.className = 'imp-card' + (isNew ? ' is-new' : '');
+    var tag = '';
+    if (!isNew && info.is_archived) tag = '<span class="imp-tag">已在归档区</span>';
+    else if (info.is_encrypted) tag = '<span class="imp-tag">🔒 加密</span>';
+    var pv = info.locked ? '加密笔记，解锁后才能比较内容' : (info.preview || '');
+    c.innerHTML = tag
+        + '<h3>' + escapeHtml(info.title || '(无标题)') + '</h3>'
+        + '<p>' + escapeHtml(pv) + '</p>'
+        + '<div class="imp-foot"><span>修改 ' + escapeHtml(impFmtTime(info.updated_at)) + '</span>'
+        + '<span>' + escapeHtml(impStatsLine(info.stats)) + '</span></div>';
+    return c;
+}
+
+// 以 0 为中心的对数刻度：|Δ| 越大越靠外，满格 = IMP_LOG_MAX
+function impBarFrac(delta) {
+    if (!delta) return 0;
+    var f = Math.log(1 + Math.abs(delta)) / Math.log(1 + IMP_LOG_MAX);
+    return Math.min(1, f) * (delta < 0 ? -1 : 1);
+}
+
+function impBuildBar(oldSt, newSt) {
+    var wrap = document.createElement('div');
+    wrap.className = 'imp-bar';
+    if (!oldSt || !newSt) {
+        wrap.innerHTML = '<div class="imp-delta"><span class="same">无法比较字数（加密笔记内容不可读）</span></div>';
+        return wrap;
+    }
+    var d = newSt.chars - oldSt.chars;
+    var frac = impBarFrac(d);
+    // 接近 100% 时保留一位小数，否则「40 字对 9500 字」会被四舍五入成 −100%，看起来像全删光了
+    var pctRaw = oldSt.chars > 0 ? d / oldSt.chars * 100 : null;
+    var pct = pctRaw === null ? null
+        : (Math.abs(pctRaw) >= 99 && Math.abs(pctRaw) < 100 ? Math.round(pctRaw * 10) / 10 : Math.round(pctRaw));
+
+    var ticks = [10, 100, 1000, 10000, 100000], tickHtml = '', scaleHtml = '';
+    var fmtTick = function (v) { return v >= 10000 ? (v / 10000) + '万' : (v >= 1000 ? (v / 1000) + 'k' : String(v)); };
+    ticks.forEach(function (v) {
+        var off = Math.log(1 + v) / Math.log(1 + IMP_LOG_MAX) * 50;
+        tickHtml += '<div class="imp-tick" style="left:' + (50 - off) + '%"></div><div class="imp-tick" style="left:' + (50 + off) + '%"></div>';
+        scaleHtml += '<span style="left:' + (50 - off) + '%">' + fmtTick(v) + '</span><span style="left:' + (50 + off) + '%">' + fmtTick(v) + '</span>';
+    });
+    scaleHtml += '<span style="left:50%;color:#aaa">0</span>';
+
+    wrap.innerHTML =
+        '<div class="imp-bar-head"><span>← 内容减少</span><span title="媒体按 文件字节数÷100 折合成字数，最少 16">对数刻度（字数变化，媒体按字节÷100 折合）</span><span>内容增多 →</span></div>'
+        + '<div class="imp-track">' + tickHtml + '<div class="imp-mid"></div>'
+        + '<div class="imp-fill ' + (d < 0 ? 'neg' : 'pos') + '"></div></div>'
+        + '<div class="imp-scale">' + scaleHtml + '</div>';
+
+    // 先挂载为 0 宽，下一帧再设终值，过渡动画才会播放
+    var fill = wrap.querySelector('.imp-fill');
+    requestAnimationFrame(function () { requestAnimationFrame(function () { fill.style.width = (Math.abs(frac) * 50) + '%'; }); });
+
+    var delta = document.createElement('div');
+    delta.className = 'imp-delta';
+    var txt = d === 0 ? '<span class="same">字数相同</span>'
+        : '<span class="' + (d > 0 ? 'up' : 'down') + '">' + (d > 0 ? '+' : '−') + impFmtNum(Math.abs(d)) + ' 字'
+          + (pct !== null ? '（' + (d > 0 ? '+' : '−') + Math.abs(pct) + '%）' : '') + '</span>';
+    delta.innerHTML = txt;
+    // 非文字内容的变化也列出来
+    [['images', '图片'], ['videos', '视频'], ['audio', '音频'], ['files', '文件']].forEach(function (k) {
+        var dv = (newSt[k[0]] || 0) - (oldSt[k[0]] || 0);
+        if (dv !== 0) {
+            var chip = document.createElement('span');
+            chip.className = 'imp-chip ' + (dv > 0 ? 'up' : 'down');
+            chip.innerText = k[1] + ' ' + (dv > 0 ? '+' : '−') + Math.abs(dv);
+            delta.appendChild(chip);
+        }
+    });
+    wrap.appendChild(delta);
+    return wrap;
+}
+
+function impRenderDiff(container, res) {
+    container.innerHTML = '';
+    var head = document.createElement('div');
+    head.className = 'imp-diff-head';
+    head.innerHTML = '<span style="color:#81c784">+' + res.added + ' 行</span><span style="color:#e57373">−' + res.removed + ' 行</span>'
+        + '<span style="color:#777">文字、格式（# 标题 / - 列表 / **加粗**）以及 <span class="df-embed">[图片]</span><span class="df-embed">[视频]</span><span class="df-embed">[音频]</span><span class="df-embed">[文件]</span> 都会体现</span>'
+        + (res.truncated ? '<span style="color:#ffb74d">内容过长，仅显示前 20000 行</span>' : '');
+    container.appendChild(head);
+
+    var body = document.createElement('div');
+    body.className = 'imp-diff-body';
+    var embedRe = /(\[(?:图片|视频|音频|文件|嵌入):[^\]]*\])/g;
+    function renderText(t) { return escapeHtml(t).replace(embedRe, '<span class="df-embed">$1</span>'); }
+
+    (res.meta || []).forEach(function (m) {
+        var a = document.createElement('div'); a.className = 'df-line df-del';
+        a.innerHTML = '<span class="df-no"></span><span class="df-no"></span><span class="df-sign">−</span><span class="df-text">' + escapeHtml(m.label + ': ' + m.old) + '</span>';
+        var b = document.createElement('div'); b.className = 'df-line df-ins';
+        b.innerHTML = '<span class="df-no"></span><span class="df-no"></span><span class="df-sign">+</span><span class="df-text">' + escapeHtml(m.label + ': ' + m.new) + '</span>';
+        body.appendChild(a); body.appendChild(b);
+    });
+    if ((res.meta || []).length) {
+        var sep = document.createElement('div'); sep.className = 'df-meta'; sep.innerText = '─ 以上为元数据 ─';
+        body.appendChild(sep);
+    }
+
+    function lineEl(l) {
+        var el = document.createElement('div');
+        el.className = 'df-line df-' + l.tag;
+        el.innerHTML = '<span class="df-no">' + (l.old_no || '') + '</span><span class="df-no">' + (l.new_no || '') + '</span>'
+            + '<span class="df-sign">' + (l.tag === 'ins' ? '+' : l.tag === 'del' ? '−' : '') + '</span>'
+            + '<span class="df-text">' + renderText(l.text) + '</span>';
+        return el;
+    }
+
+    // 连续没变的行折叠起来，只留前后各 3 行作上下文
+    var CTX = 3, i = 0, ls = res.lines;
+    while (i < ls.length) {
+        if (ls[i].tag !== 'eq') { body.appendChild(lineEl(ls[i])); i++; continue; }
+        var j = i; while (j < ls.length && ls[j].tag === 'eq') j++;
+        var run = ls.slice(i, j), atStart = (i === 0), atEnd = (j === ls.length);
+        var keepHead = atStart ? 0 : CTX, keepTail = atEnd ? 0 : CTX;
+        if (run.length <= keepHead + keepTail + 2) {
+            run.forEach(function (l) { body.appendChild(lineEl(l)); });
+        } else {
+            run.slice(0, keepHead).forEach(function (l) { body.appendChild(lineEl(l)); });
+            var hidden = run.slice(keepHead, run.length - keepTail);
+            var fold = document.createElement('div');
+            fold.className = 'df-fold';
+            fold.innerText = '··· 展开 ' + hidden.length + ' 行未改动内容 ···';
+            (function (fold, hidden) {
+                fold.addEventListener('click', function () {
+                    var frag = document.createDocumentFragment();
+                    hidden.forEach(function (l) { frag.appendChild(lineEl(l)); });
+                    fold.parentNode.replaceChild(frag, fold);
+                });
+            })(fold, hidden);
+            body.appendChild(fold);
+            run.slice(run.length - keepTail).forEach(function (l) { body.appendChild(lineEl(l)); });
+        }
+        i = j;
+    }
+    if (!ls.length) {
+        var none = document.createElement('div'); none.className = 'df-meta'; none.innerText = '两边内容完全相同';
+        body.appendChild(none);
+    }
+    container.appendChild(body);
+}
+
+function renderImportConflicts(scan) {
+    var list = document.getElementById('import-conflict-list');
+    list.innerHTML = '';
+    var conflicts = scan.notes.filter(function (n) { return n.similar && n.similar.length; });
+    document.getElementById('import-conflict-count').innerText =
+        conflicts.length + ' 篇有相似项 / 共 ' + scan.notes.length + ' 篇';
+
+    scan.notes.forEach(function (n) {
+        importDecisions[n.src_id] = { src_id: n.src_id, action: 'import', replace_id: null };
+    });
+
+    conflicts.forEach(function (n) {
+        var cur = 0;                                  // 当前选中的候选下标
+        var row = document.createElement('div');
+        row.className = 'imp-row';
+        var main = document.createElement('div');
+        main.className = 'imp-main';
+        var pair = document.createElement('div');
+        pair.className = 'imp-pair';
+        var left = document.createElement('div');
+        var mid = document.createElement('div');
+        mid.className = 'imp-arrow';
+        mid.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="12" x2="20" y2="12"/><polyline points="13 5 20 12 13 19"/></svg>';
+        var right = document.createElement('div');
+        pair.appendChild(left); pair.appendChild(mid); pair.appendChild(right);
+        main.appendChild(pair);
+
+        var barHolder = document.createElement('div');
+        var linkRow = document.createElement('div');
+        linkRow.className = 'imp-delta';
+        var diffLink = document.createElement('span');
+        diffLink.className = 'imp-difflink';
+        linkRow.appendChild(diffLink);
+        var diffBox = document.createElement('div');
+        diffBox.className = 'imp-diff';
+        diffBox.style.display = 'none';
+        main.appendChild(barHolder); main.appendChild(linkRow); main.appendChild(diffBox);
+
+        var col = document.createElement('div');
+        col.className = 'imp-actions-col';
+
+        function target() { return n.similar[cur]; }
+
+        function renderSides() {
+            var t = target();
+            left.innerHTML = ''; right.innerHTML = '';
+            // 左侧标题行：现有笔记 + 候选切换
+            var capL = document.createElement('div');
+            capL.className = 'imp-cap';
+            capL.innerHTML = '<b>现有笔记</b><span>标题 ' + Math.round(t.similarity * 100) + '%'
+                + (t.content_similarity != null ? ' · 内容 ' + Math.round(t.content_similarity * 100) + '%' : '') + '</span>';
+            if (n.similar.length > 1) {
+                var nav = document.createElement('span');
+                nav.className = 'imp-nav';
+                nav.innerHTML = '<button title="上一个候选">‹</button><span>' + (cur + 1) + '/' + n.similar.length + '</span><button title="下一个候选">›</button>';
+                var btns = nav.querySelectorAll('button');
+                btns[0].disabled = cur === 0;
+                btns[1].disabled = cur === n.similar.length - 1;
+                btns[0].addEventListener('click', function () { switchCand(cur - 1); });
+                btns[1].addEventListener('click', function () { switchCand(cur + 1); });
+                capL.appendChild(nav);
+            }
+            left.appendChild(capL);
+            left.appendChild(impCard(t, false));
+
+            var capR = document.createElement('div');
+            capR.className = 'imp-cap';
+            capR.innerHTML = '<b>备份里的新版</b>' + (t.added_lines || t.removed_lines
+                ? '<span style="color:#81c784">+' + t.added_lines + '</span><span style="color:#e57373">−' + t.removed_lines + ' 行</span>' : '');
+            right.appendChild(capR);
+            right.appendChild(impCard(n, true));
+
+            barHolder.innerHTML = '';
+            barHolder.appendChild(impBuildBar(t.stats, n.stats));
+
+            var canDiff = !t.locked && !n.is_encrypted;
+            diffLink.style.display = canDiff ? '' : 'none';
+            diffLink.innerText = '查看具体差异 ▾';
+            diffBox.style.display = 'none';
+            diffBox.innerHTML = '';
+        }
+
+        function switchCand(i) {
+            if (i < 0 || i >= n.similar.length) return;
+            cur = i;
+            // 已经确认过的「替换」是针对某一篇的，换了候选就不能沿用，回到默认的独立导入
+            if (importDecisions[n.src_id].action === 'replace') {
+                importDecisions[n.src_id] = { src_id: n.src_id, action: 'import', replace_id: null };
+                setActive('import');
+            }
+            renderSides();
+        }
+
+        var btnEls = {};
+        function setActive(action) {
+            Object.keys(btnEls).forEach(function (k) { btnEls[k].classList.toggle('on', k === action); });
+        }
+        function mkBtn(action, label, hint, danger) {
+            var b = document.createElement('button');
+            b.className = 'imp-btn' + (danger ? ' danger' : '') + (action === 'import' ? ' on' : '');
+            b.innerHTML = escapeHtml(label) + '<small>' + escapeHtml(hint) + '</small>';
+            b.addEventListener('click', function () {
+                if (action === 'replace') {
+                    var t = target();
+                    customDialog({
+                        title: '确认替换',
+                        message: '将导入《' + (n.title || '无标题') + '》，并把现有的《' + t.title + '》移入归档区。\n\n旧笔记不会被删除，可以随时从归档区找回。\n\n确定吗？'
+                    }).then(function (ok) {
+                        if (!ok) return;
+                        importDecisions[n.src_id] = { src_id: n.src_id, action: 'replace', replace_id: t.id };
+                        setActive('replace');
+                    });
+                    return;
+                }
+                importDecisions[n.src_id] = { src_id: n.src_id, action: action, replace_id: null };
+                setActive(action);
+            });
+            btnEls[action] = b;
+            return b;
+        }
+        col.appendChild(mkBtn('import', '独立导入', '作为单独一篇，不影响现有', false));
+        col.appendChild(mkBtn('replace', '替换', '旧的移入归档区，不会删除', true));
+        col.appendChild(mkBtn('skip', '不导入', '跳过这一篇', false));
+
+        diffLink.addEventListener('click', function () {
+            if (diffBox.style.display !== 'none') { diffBox.style.display = 'none'; diffLink.innerText = '查看具体差异 ▾'; return; }
+            diffBox.style.display = 'block';
+            diffLink.innerText = '收起差异 ▴';
+            diffBox.innerHTML = '<div class="df-meta">正在比较...</div>';
+            invoke('import_diff', { sessionId: importSession, srcId: n.src_id, existingId: target().id }).then(function (res) {
+                impRenderDiff(diffBox, res);
+            }).catch(function (e) {
+                diffBox.innerHTML = '<div class="df-meta">' + escapeHtml('' + e) + '</div>';
+            });
+        });
+
+        renderSides();
+        row.appendChild(main);
+        row.appendChild(col);
+        list.appendChild(row);
+    });
+
+    if (!conflicts.length) {
+        list.innerHTML = '<div style="color:#888;padding:20px">没有发现标题相似的笔记，可以直接导入。</div>';
+    }
+}
+
+function runImportApply() {
+    var decisions = Object.keys(importDecisions).map(function (k) { return importDecisions[k]; });
+    var btn = document.getElementById('import-conflict-go');
+    btn.innerText = '导入中...';
+    invoke('import_apply', { sessionId: importSession, decisions: decisions }).then(function (res) {
+        btn.innerText = '确认导入';
+        importSession = null;
+        document.getElementById('import-conflict-overlay').style.display = 'none';
+        var msg = '成功导入 ' + res.imported + ' 篇笔记。';
+        if (res.renamed > 0) msg += '\n有 ' + res.renamed + ' 篇被替换的旧笔记已移入归档区，可随时找回。';
+        if (res.titles && res.titles.length) msg += '\n\n' + res.titles.slice(0, 8).join('\n') + (res.titles.length > 8 ? '\n...' : '');
+        customDialog({ title: '导入完成', message: msg });
+        loadNotes();
+    }).catch(function (e) {
+        btn.innerText = '确认导入';
+        customDialog({ title: '导入失败', message: '' + e });
+    });
+}
+
+var isImporting = false;
+document.getElementById('home-import-btn').addEventListener('click', function () {
+    if (isImporting) return;
+    window.__TAURI__.dialog.open({
+        multiple: false,
+        filters: [{ name: '锚点备份', extensions: ['tar', 'gz', 'tar.gz'] }]
+    }).then(function (path) {
+        if (!path) return;
+        isImporting = true;
+        var btn = document.getElementById('home-import-btn');
+        var old = btn.innerText;
+        btn.innerText = '解析中...';
+        invoke('import_scan', { archivePath: path }).then(function (scan) {
+            btn.innerText = old; isImporting = false;
+            importSession = scan.session_id;
+            importDecisions = {};
+            var hasConflict = scan.notes.some(function (n) { return n.similar && n.similar.length; });
+            if (!hasConflict) {
+                // 没有相似项就不打扰，直接导入
+                scan.notes.forEach(function (n) {
+                    importDecisions[n.src_id] = { src_id: n.src_id, action: 'import', replace_id: null };
+                });
+                runImportApply();
+                return;
+            }
+            renderImportConflicts(scan);
+            document.getElementById('import-conflict-overlay').style.display = 'flex';
+        }).catch(function (e) {
+            btn.innerText = old; isImporting = false;
+            customDialog({ title: '导入失败', message: '' + e });
+        });
+    });
+});
+
+document.getElementById('import-conflict-go').addEventListener('click', runImportApply);
+document.getElementById('import-conflict-cancel').addEventListener('click', function () {
+    if (importSession) invoke('import_cancel', { sessionId: importSession }).catch(function () {});
+    importSession = null;
+    document.getElementById('import-conflict-overlay').style.display = 'none';
 });
 
 // 无索引数据管理
@@ -1478,7 +2116,7 @@ document.getElementById('edit-orphans-btn').addEventListener('click', function()
                         message: '您即将彻底物理删除这 ' + files.length + ' 个无索引的闲置文件！\n删除后不可恢复，确定要继续吗？' 
                     }).then(function(yes) {
                         if (yes) {
-                            var promises = files.map(function(f) { return invoke('delete_orphaned_file', { path: f.path }); });
+                            var promises = files.map(function(f) { return invoke('delete_orphaned_file', { noteId: f.note_id, relPath: f.rel_path }); });
                             Promise.all(promises).then(function() {
                                 list.innerHTML = '<div style="text-align:center;color:#888;padding:50px">已清空所有无索引文件</div>';
                                 deleteAllBtn.style.display = 'none';
@@ -1530,7 +2168,7 @@ document.getElementById('edit-orphans-btn').addEventListener('click', function()
                 sizeDiv.innerText = sizeStr;
                 left.appendChild(sizeDiv);
             } else {
-                left.innerHTML = previewHtml + '<div><div style="font-weight:bold">' + f.rel_path.split('/').pop() + '</div><div style="font-size:12px;color:#888;margin-top:4px">' + sizeStr + '</div></div>';
+                left.innerHTML = previewHtml + '<div><div style="font-weight:bold">' + escapeHtml(f.rel_path.split('/').pop()) + '</div><div style="font-size:12px;color:#888;margin-top:4px">' + escapeHtml(sizeStr) + '</div></div>';
             }
             
             var right = document.createElement('div');
@@ -1569,7 +2207,7 @@ document.getElementById('edit-orphans-btn').addEventListener('click', function()
                         delBtn.style.background = oldBg;
                     }, 3000);
                 } else {
-                    invoke('delete_orphaned_file', { path: f.path }).then(function() {
+                    invoke('delete_orphaned_file', { noteId: f.note_id, relPath: f.rel_path }).then(function() {
                         el.remove();
                         if (list.children.length === 0) {
                             list.innerHTML = '<div style="text-align:center;color:#888;padding:50px">当前没有任何无索引的闲置文件</div>';
@@ -1590,6 +2228,8 @@ document.getElementById('edit-orphans-btn').addEventListener('click', function()
     }, 50);
 });
 
+var dlgHideTimer = null;
+
 function customDialog(options) {
     return new Promise(function(resolve) {
         var overlay = document.getElementById('custom-dialog-overlay');
@@ -1598,8 +2238,16 @@ function customDialog(options) {
         var input = document.getElementById('custom-dialog-input');
         var btnCancel = document.getElementById('custom-dialog-cancel');
         var btnConfirm = document.getElementById('custom-dialog-confirm');
+        var btnRow = btnConfirm.parentNode;
+        var choiceRow = document.getElementById('custom-dialog-choices');
+        if (!choiceRow) {
+            choiceRow = document.createElement('div');
+            choiceRow.id = 'custom-dialog-choices';
+            choiceRow.style.cssText = 'display:none;justify-content:flex-end;gap:10px;margin-top:10px;flex-wrap:wrap';
+            btnRow.parentNode.insertBefore(choiceRow, btnRow.nextSibling);
+        }
         title.innerText = options.title || '提示';
-        msg.innerHTML = (options.message || '').replace(/\n/g, '<br>');
+        msg.innerHTML = escapeHtml(options.message || '').replace(/\n/g, '<br>');
         msg.style.display = options.message ? 'block' : 'none';
         if (options.isInput) {
             input.style.display = 'block';
@@ -1608,11 +2256,39 @@ function customDialog(options) {
         } else {
             input.style.display = 'none';
         }
+
+        // 多按钮模式：用 choices 替换默认的 取消/确定
+        var choices = options.choices || null;
+        choiceRow.innerHTML = '';
+        if (choices) {
+            btnRow.style.display = 'none';
+            choiceRow.style.display = 'flex';
+            choices.forEach(function (c) {
+                var b = document.createElement('button');
+                b.className = 'dlg-choice' + (c.primary ? ' primary' : '');
+                b.innerText = c.label;
+                b.onclick = function () { cleanup(); resolve(c.value); };
+                choiceRow.appendChild(b);
+            });
+        } else {
+            btnRow.style.display = 'flex';
+            choiceRow.style.display = 'none';
+        }
+
+        // 上一个弹窗的退场还没结束就又开了新的：取消那个隐藏计时，直接接着入场
+        clearTimeout(dlgHideTimer);
+        overlay.classList.remove('dlg-close');
         overlay.style.display = 'flex';
+        void overlay.offsetWidth;               // 强制回流，让入场动画能重新播放
+        overlay.classList.add('dlg-open');
+
         setTimeout(function() {
             if (options.isInput) {
                 input.focus();
                 input.select();
+            } else if (choices) {
+                var p = choiceRow.querySelector('.primary') || choiceRow.firstChild;
+                if (p) p.focus();
             } else {
                 btnConfirm.focus();
             }
@@ -1621,7 +2297,12 @@ function customDialog(options) {
             btnCancel.onclick = null;
             btnConfirm.onclick = null;
             input.onkeydown = null;
-            overlay.style.display = 'none';
+            overlay.classList.remove('dlg-open');
+            overlay.classList.add('dlg-close');
+            dlgHideTimer = setTimeout(function () {
+                overlay.style.display = 'none';
+                overlay.classList.remove('dlg-close');
+            }, 200);
         };
         btnCancel.onclick = function() { cleanup(); resolve(null); };
         btnConfirm.onclick = function() { cleanup(); resolve(options.isInput ? input.value : true); };
@@ -1631,6 +2312,29 @@ function customDialog(options) {
         };
     });
 }
+
+// 启动时如果已经有一个锚点在运行，用标准弹窗问一下怎么办。
+// 有意不提供点遮罩关闭：必须明确选一个，否则两个实例会在不知情的情况下共用同一份数据。
+window.addEventListener('load', function () { invoke('startup_context').then(function (ctx) {
+    if (!ctx || !ctx.other_instance) return;
+    customDialog({
+        title: '锚点已经在运行',
+        message: '检测到已经开启了一个锚点。\n\n'
+               + '两个窗口共用同一份笔记数据，请避免在两边同时编辑同一篇笔记，否则后保存的会覆盖先保存的。',
+        choices: [
+            { label: '取消', value: 'quit' },
+            { label: '开启新的', value: 'new' },
+            { label: '显示已开启的', value: 'show', primary: true }
+        ]
+    }).then(function (choice) {
+        if (choice === 'show') {
+            invoke('focus_other_instance').catch(function () {}).then(function () { invoke('quit_app'); });
+        } else if (choice === 'quit') {
+            invoke('quit_app');
+        }
+        // 'new'：关掉弹窗，继续用这个新实例
+    });
+}).catch(function () {}); });
 
 // 新建文件夹
 document.getElementById('home-new-folder-btn').addEventListener('click', function() {
@@ -1656,7 +2360,9 @@ document.getElementById('lock-status-btn').addEventListener('click', function() 
     });
 });
 
+var noteIsEncrypted = false;
 document.getElementById('encrypt-note-btn').addEventListener('click', function() {
+    if (noteIsEncrypted) { removeEncryption(); return; }
     customDialog({
         title: '加密笔记',
         message: '请输入您要设置的密码。注意：密码丢失将无法恢复数据！',
@@ -1692,6 +2398,60 @@ document.getElementById('encrypt-note-btn').addEventListener('click', function()
         });
     });
 });
+
+document.getElementById('change-pwd-btn').addEventListener('click', function() {
+    if (!currentNoteId) return;
+    customDialog({ title: '修改密码', message: '请输入当前密码：', isInput: true, isPassword: true }).then(function(oldPwd) {
+        if (!oldPwd) return;
+        customDialog({ title: '修改密码', message: '请输入新密码：', isInput: true, isPassword: true }).then(function(p1) {
+            if (!p1) return;
+            customDialog({ title: '确认新密码', message: '请再次输入新密码：', isInput: true, isPassword: true }).then(function(p2) {
+                if (!p2) return;
+                if (p1 !== p2) { customDialog({ title: '错误', message: '两次输入的新密码不一致，未做任何改动。' }); return; }
+                var btn = document.getElementById('change-pwd-btn');
+                var label = btn.innerText;
+                btn.innerText = '处理中...';
+                invoke('change_note_password', { noteId: currentNoteId, oldPassword: oldPwd, newPassword: p1 }).then(function(ok) {
+                    btn.innerText = label;
+                    if (!ok) { customDialog({ title: '错误', message: '当前密码不正确，未做任何改动。' }); return; }
+                    customDialog({ title: '完成', message: '密码已修改。旧密码立即失效，请务必记住新密码。' });
+                    loadNotes();
+                }).catch(function(e) {
+                    btn.innerText = label;
+                    customDialog({ title: '修改失败', message: '' + e });
+                });
+            });
+        });
+    });
+});
+
+function removeEncryption() {
+    if (!currentNoteId) return;
+    customDialog({
+        title: '解除加密',
+        message: '解除后，这篇笔记的正文、历史记录和媒体文件都将以明文保存。\n请输入当前密码以确认：',
+        isInput: true,
+        isPassword: true
+    }).then(function(pwd) {
+        if (!pwd) return;
+        invoke('decrypt_note', { noteId: currentNoteId, password: pwd }).then(function(ok) {
+            if (!ok) { customDialog({ title: '错误', message: '密码错误，未做任何改动。' }); return; }
+            noteIsEncrypted = false;
+            var encBtn = document.getElementById('encrypt-note-btn');
+            var lockBtn = document.getElementById('lock-status-btn');
+            if (encBtn) { encBtn.innerText = '加密'; encBtn.title = '为当前笔记加密'; }
+            if (lockBtn) lockBtn.style.display = 'none';
+            var pwdBtn = document.getElementById('change-pwd-btn');
+            if (pwdBtn) pwdBtn.style.display = 'none';
+            var note = allNotesCache.find(function(n) { return n.id === currentNoteId; });
+            if (note) note.is_encrypted = false;
+            customDialog({ title: '完成', message: '已解除加密。' });
+            loadNotes();
+        }).catch(function(e) {
+            customDialog({ title: '解除失败', message: '错误: ' + e });
+        });
+    });
+}
 
 document.getElementById('archive-note-btn').addEventListener('click', function() {
     if (!currentNoteId) return;
@@ -1765,7 +2525,18 @@ document.getElementById('paste-toggle').addEventListener('click', function() {
     else { track.classList.remove('on'); label.textContent = '纯文本粘贴'; }
 });
 // 拦截粘贴：处理图片粘贴与纯文本剥离
-quill.root.addEventListener('paste', function(e) {
+// 必须挂在 document 的捕获阶段，并在接管时 stopImmediatePropagation。
+//
+// Quill 自带的 clipboard 模块也监听 paste，且注册得比这里早。它在 onPaste 里只看
+// e.defaultPrevented —— 那一刻我们还没 preventDefault，于是它照常记下选区并
+// setTimeout 1ms 后执行 `retain(index).concat(转换结果).delete(range.length)`。
+// 因为我们随后 preventDefault 了，它的「转换结果」是空的，那条延迟 delta 就退化成
+// 纯 delete，落在我们已经插入文本之后的文档上，把刚粘贴的内容连同后面的正文一起删掉。
+document.addEventListener('paste', function(e) {
+    // 只接管编辑器内的粘贴，别影响对话框输入框等
+    if (e.target !== quill.root && !quill.root.contains(e.target)) return;
+    var takeOver = function() { e.preventDefault(); e.stopImmediatePropagation(); };
+
     var clipboardData = e.clipboardData || window.clipboardData;
     var hasImage = false;
     if (clipboardData && clipboardData.items) {
@@ -1774,46 +2545,20 @@ quill.root.addEventListener('paste', function(e) {
                 var file = clipboardData.items[i].getAsFile();
                 if (file && currentNoteId) {
                     hasImage = true;
-                    e.preventDefault();
+                    takeOver();
+                    // 选区要在此刻取好：异步回调里它可能已经变了
+                    var pasteRange = quill.getSelection(true);
+                    var atIndex = pasteRange ? pasteRange.index : quill.getLength();
+                    var selLen = pasteRange ? pasteRange.length : 0;
                     var reader = new FileReader();
                     reader.onload = function(evt) {
                         var ext = file.type.split('/')[1] || 'png';
                         invoke('save_media_base64', { noteId: currentNoteId, mediaType: 'image', fileName: 'paste.' + ext, base64Data: evt.target.result })
                         .then(function(res) {
-                            var range = quill.getSelection(true);
-                            var index = range ? range.index : quill.getLength();
-                            
-var streamIsLoading = false;
-document.querySelector('#editor-container').addEventListener('scroll', function(e) {
-    if (streamIsActive && !streamIsLoading) {
-        var el = e.target;
-        if (el.scrollHeight - el.scrollTop - el.clientHeight < 2000) {
-            streamIsLoading = true;
-            document.getElementById('streaming-text').innerText = '缓冲中...';
-            // 异步执行，释放主线程，防止滑动瞬间卡死
-            setTimeout(function() {
-                try {
-                    loadNextStreamChunk();
-                } catch(err) {
-                    console.error("Stream loading error:", err);
-                }
-                streamIsLoading = false;
-            }, 50);
-        }
-    }
-});
-document.addEventListener('keydown', function(e) {
-    if (e.ctrlKey && (e.key === 'a' || e.key === 'A' || e.key === 'End' || e.key === 'Home')) {
-        if (streamIsActive) {
-            loadAllStreamChunks();
-        }
-    }
-});
-
-var DeltaCls = Quill.import('delta');
-                            var delta = new DeltaCls().retain(index).insert({ image: res.path });
+                            var DeltaCls = Quill.import('delta');
+                            var delta = new DeltaCls().retain(atIndex).delete(selLen).insert({ image: res.path });
                             quill.updateContents(delta, 'user');
-                            quill.setSelection(index + 1, 'silent');
+                            quill.setSelection(atIndex + 1, 'silent');
                         });
                     };
                     reader.readAsDataURL(file);
@@ -1821,15 +2566,15 @@ var DeltaCls = Quill.import('delta');
             }
         }
     }
-    
+
     if (hasImage) {
         inputSource = 'paste';
         return;
     }
 
     if (!richPaste) {
-        e.preventDefault();
-        var text = clipboardData.getData('text/plain');
+        takeOver();
+        var text = clipboardData ? clipboardData.getData('text/plain') : '';
         if (text) {
             text = text.replace(/\r\n/g, '\n');
             var range = quill.getSelection(true);
@@ -1841,8 +2586,40 @@ var DeltaCls = Quill.import('delta');
             }
         }
     }
+    // 保留格式粘贴时不接管，交给 Quill 自己处理
     inputSource = 'paste';
-});
+}, true);
+// 复制/剪切必须接管，纯文本要由 Quill 的文档模型生成。
+//
+// Chromium 把相邻的 <p> 序列化成 text/plain 时会在段落之间补一个空行，哪怕 margin 是 0：
+// 笔记里的 "a\nb\nc" 复制出来是 "a\n\nb\n\nc"，粘贴回来每行之间就多出一个空行。
+// （同样的问题也会影响复制到别的软件里的内容。）
+function takeOverCopy(e, isCut) {
+    if (e.target !== quill.root && !quill.root.contains(e.target)) return;
+    var range = quill.getSelection();
+    if (!range || range.length === 0) return;              // 没选中内容，交给浏览器
+    var dt = e.clipboardData;
+    if (!dt) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    dt.setData('text/plain', quill.getText(range.index, range.length));
+    // 富文本粘贴还要靠 HTML：照旧取选区的 DOM 片段
+    try {
+        var sel = window.getSelection();
+        if (sel && sel.rangeCount) {
+            var holder = document.createElement('div');
+            holder.appendChild(sel.getRangeAt(0).cloneContents());
+            if (holder.innerHTML) dt.setData('text/html', holder.innerHTML);
+        }
+    } catch (err) {}
+    if (isCut) {
+        inputSource = 'cut';
+        quill.deleteText(range.index, range.length, 'user');
+    }
+}
+document.addEventListener('copy', function (e) { takeOverCopy(e, false); }, true);
+document.addEventListener('cut', function (e) { takeOverCopy(e, true); }, true);
+
 // 其他输入来源检测
 var inputSource = 'keyboard';
 quill.root.addEventListener('cut', function() { inputSource = 'cut'; });
@@ -1982,7 +2759,7 @@ document.addEventListener('mousemove', function(e) {
             ghostEl.style.border = '1px solid #555';
             
             if (manualDragData.isImage) {
-                ghostEl.innerHTML = '<img src="' + manualDragData.target.src + '" style="max-height:100px; max-width:150px; border-radius:4px;">';
+                ghostEl.innerHTML = '<img src="' + escapeHtml(manualDragData.target.src) + '" style="max-height:100px; max-width:150px; border-radius:4px;">';
                 var blot = Quill.find(manualDragData.target);
                 if (blot) {
                     manualDragData.qIndex = quill.getIndex(blot);
@@ -2169,6 +2946,8 @@ function loadNextStreamChunk() {
     isProgrammaticChange = false;
     
     updateStreamUI();
+    // 同上：静默追加不触发 text-change，需要手动刷新字数等派生 UI
+    syncGuttersDebounced(30);
     if (streamOps.length === 0) {
         streamIsActive = false;
         setTimeout(function() { document.getElementById('streaming-status').style.display = 'none'; }, 1000);
@@ -2182,21 +2961,31 @@ function updateStreamUI() {
     document.getElementById('streaming-bar').style.width = pct + '%';
 }
 
-function loadAllStreamChunks() {
-    if (!streamIsActive || streamOps.length === 0) return;
-    document.getElementById('streaming-text').innerText = '全量合并...';
-    // 强制一帧后执行，以便渲染文本
-    setTimeout(function() {
+// 同步并回所有未加载的分块。任何读取或写回全文的操作（编辑、保存快照）都必须先调用它：
+// 流式加载期间 quill 里只有前若干万字，此时写回 content.db 会把正文尾部永久截断。
+function flushStreamOpsNow() {
+    if (!streamIsActive) return;
+    if (streamOps.length > 0) {
         var DeltaCls = Quill.import('delta');
         var appendDelta = new DeltaCls().retain(quill.getLength() - 1).concat(new DeltaCls(streamOps));
         isProgrammaticChange = true;
         quill.updateContents(appendDelta, 'silent');
         isProgrammaticChange = false;
         streamOps = [];
-        streamIsActive = false;
-        updateStreamUI();
-        document.getElementById('streaming-status').style.display = 'none';
-    }, 10);
+    }
+    streamIsActive = false;
+    streamLoadedLen = streamTotalLen;
+    updateStreamUI();
+    document.getElementById('streaming-status').style.display = 'none';
+    // 'silent' 源不触发 text-change，字数/行号/结构树不会自己刷新
+    syncGuttersDebounced(30);
+}
+
+function loadAllStreamChunks() {
+    if (!streamIsActive || streamOps.length === 0) return;
+    document.getElementById('streaming-text').innerText = '全量合并...';
+    // 强制一帧后执行，以便渲染文本
+    setTimeout(flushStreamOpsNow, 10);
 }
 
 function extractDeletedText(delta, oldDelta) {
@@ -2216,10 +3005,11 @@ function processSaveQueue() {
     if (isSaving || saveQueue.length === 0) return;
     isSaving = true;
     var item = saveQueue.shift();
-    invoke('save_event', item).then(function() {
-        // 同时保存完整文档快照到 content.db
-        var fullDelta = JSON.stringify(quill.getContents());
-        invoke('save_content', { noteId: currentNoteId, deltaJson: fullDelta }).catch(function(e) {
+    var payload = { noteId: item.noteId, operationType: item.operationType, deltaJson: item.deltaJson, title: item.title, preview: item.preview };
+    invoke('save_event', payload).then(function() {
+        // 快照和 noteId 都在入队时就固定好了：等到这里再读 currentNoteId 的话，
+        // 用户若已返回主页，它会是 null，这次快照就被静默丢弃（最后几秒编辑丢失）。
+        invoke('save_content', { noteId: item.noteId, deltaJson: item.fullDelta }).catch(function(e) {
             console.error('保存 content.db 失败', e);
         });
         isSaving = false;
@@ -2245,19 +3035,22 @@ var BATCH_INTERVAL = 3000; // 3秒
 function flushBatch() {
     if (!pendingBatch || !currentNoteId) return;
     clearTimeout(batchFlushTimer);
+    if (streamIsActive) flushStreamOpsNow(); // 绝不写回只含部分正文的快照
     var text = quill.getText(0, 150);
     var idx = text.indexOf('\n');
     var title = idx > 0 ? text.substring(0, idx).trim() : '无标题';
     var preview = text.substring(idx + 1, idx + 101).trim().replace(/\n/g, ' ');
     var richPayload = { ops: pendingBatch.delta.ops };
     if (pendingBatch.delText) richPayload._del = pendingBatch.delText;
-    saveQueue.push({ noteId: currentNoteId, operationType: pendingBatch.opType, deltaJson: JSON.stringify(richPayload), title: title || '无标题', preview: preview || '无内容' });
+    saveQueue.push({ noteId: currentNoteId, operationType: pendingBatch.opType, deltaJson: JSON.stringify(richPayload), title: title || '无标题', preview: preview || '无内容', fullDelta: JSON.stringify(quill.getContents()) });
     pendingBatch = null;
     processSaveQueue();
 }
 
 quill.on('text-change', function(delta, oldDelta, source) {
     if (isProgrammaticChange || !currentNoteId) return;
+    // 编辑会触发全文快照写回，先把未加载的分块并回来，否则正文尾部会被截断覆盖
+    if (streamIsActive) flushStreamOpsNow();
     document.getElementById('save-status').innerText = '保存中...';
     document.getElementById('save-status').style.color = '#ff9800'; clearTimeout(window.saveStatusTimeout);
     var hasInsert = delta.ops.some(function(op){return op.insert});
@@ -2429,6 +3222,12 @@ function loadNotes() {
             var fTitle = document.createElement('div');
             fTitle.className = 'folder-title';
             fTitle.innerText = folder.name;
+            fTitle.style.cursor = 'pointer';
+            fTitle.addEventListener('click', function(e) {
+                if (!backupMode) return;
+                e.stopPropagation();
+                bkToggleFolder(fCard, folder.id);   // 整组一起选/一起取消
+            });
             fCard.appendChild(fTitle);
             
             fCard.addEventListener('contextmenu', function(e) {
@@ -2476,6 +3275,7 @@ function loadNotes() {
         notes.forEach(function(note) {
             if (!note.folder_id) { grid.appendChild(createNoteCard(note)); }
         });
+        if (backupMode) bkRefreshVisuals();   // 切归档区/刷新后保持已选状态
     });
 }
 
@@ -2483,7 +3283,10 @@ function createNoteCard(note) {
     var div = document.createElement('div');
     div.className = 'note-card';
     div.id = 'note-card-' + note.id;
-    div.addEventListener('click', function(){ openNote(note.id, note.background); });
+    div.addEventListener('click', function(){
+        if (backupMode) { bkToggleNote(note.id, div); return; }
+        openNote(note.id, note.background);
+    });
     div.addEventListener('contextmenu', function(e) {
         e.preventDefault(); e.stopPropagation();
         showFolderMenu(e.clientX, e.clientY, note.id);
@@ -2499,7 +3302,7 @@ function createNoteCard(note) {
     }
     div.style.position = 'relative';
     div.style.overflow = 'visible';
-    div.innerHTML = bgLock + '<h3 style="z-index:1; position:relative;">' + note.title + '</h3><p style="z-index:1; position:relative;">' + note.preview + '</p><div style="margin-top:auto;font-size:12px;color:var(--txt-muted); z-index:1; position:relative;">最后修改: ' + t + '</div>';
+    div.innerHTML = bgLock + '<h3 style="z-index:1; position:relative;">' + escapeHtml(note.title) + '</h3><p style="z-index:1; position:relative;">' + escapeHtml(note.preview) + '</p><div style="margin-top:auto;font-size:12px;color:var(--txt-muted); z-index:1; position:relative;">最后修改: ' + escapeHtml(t) + '</div>';
     
     if (note.background) {
         var parts = note.background.split(':');
@@ -2907,13 +3710,13 @@ function doOpenNote(id, background, isEncrypted) {
     var encBtn = document.getElementById('encrypt-note-btn');
     var lockBtn = document.getElementById('lock-status-btn');
     if (encBtn && lockBtn) {
-        if (isEncrypted) {
-            encBtn.style.display = 'none';
-            lockBtn.style.display = 'block';
-        } else {
-            encBtn.style.display = 'block';
-            lockBtn.style.display = 'none';
-        }
+        noteIsEncrypted = !!isEncrypted;
+        encBtn.style.display = 'block';
+        encBtn.innerText = isEncrypted ? '解除加密' : '加密';
+        encBtn.title = isEncrypted ? '解除当前笔记的加密' : '为当前笔记加密';
+        lockBtn.style.display = isEncrypted ? 'block' : 'none';
+        var pwdBtn = document.getElementById('change-pwd-btn');
+        if (pwdBtn) pwdBtn.style.display = isEncrypted ? 'block' : 'none';
     }
     currentNoteId = id;
     applyGlobalBackground(background, false);
@@ -2957,7 +3760,7 @@ function doOpenNote(id, background, isEncrypted) {
                 isProgrammaticChange = false;
                 if (events.length === 0) {
                     var initContent = quill.getContents();
-                    saveQueue.push({ noteId: id, operationType: '创建笔记', deltaJson: JSON.stringify({ ops: initContent.ops }), title: '新笔记标题', preview: '' });
+                    saveQueue.push({ noteId: id, operationType: '创建笔记', deltaJson: JSON.stringify({ ops: initContent.ops }), title: '新笔记标题', preview: '', fullDelta: JSON.stringify(initContent) });
                     processSaveQueue();
                 }
                 document.getElementById('save-status').innerText = '已自动保存';
@@ -3068,11 +3871,11 @@ function getPayloadHtml(deltaJson) {
         ops.forEach(function(op) {
             if (op.insert) {
                 var text = typeof op.insert === 'string' ? op.insert.replace(/\n/g, '\u21b5') : '[媒体]';
-                html += '<span style="color:#4caf50;margin-right:5px">+ ' + text + '</span>';
+                html += '<span style="color:#4caf50;margin-right:5px">+ ' + escapeHtml(text) + '</span>';
             }
             if (op.delete) {
                 var showDel = delText ? delText.replace(/\n/g, '\u21b5') : op.delete + '字符';
-                html += '<span style="color:#f44336;margin-right:5px">- ' + showDel + '</span>';
+                html += '<span style="color:#f44336;margin-right:5px">- ' + escapeHtml(showDel) + '</span>';
             }
             if (op.retain && op.attributes) { html += '<span style="color:#2196f3;margin-right:5px">*调整格式*</span>'; }
         });
@@ -3110,7 +3913,7 @@ function renderBottomTimeline() {
         var d = new Date(ev.timestamp);
         var ms = d.getMilliseconds();
         var label = d.toLocaleTimeString() + '.' + (ms < 100 ? (ms < 10 ? '00' : '0') : '') + ms;
-        dot.innerHTML = '<div class="hdot" style="background:' + c + '"></div><div class="htime">' + label + '</div>';
+        dot.innerHTML = '<div class="hdot" style="background:' + c + '"></div><div class="htime">' + escapeHtml(label) + '</div>';
         dot.addEventListener('click', function(e){ e.stopPropagation(); previewHistory(ev.timestamp); });
         dots.appendChild(dot);
     });
@@ -3163,7 +3966,7 @@ function loadTimeline(noteId, isSilent) {
             var d = new Date(ev.timestamp);
             var ts = d.toLocaleTimeString() + '.' + d.getMilliseconds();
             var ph = getPayloadHtml(ev.delta_json);
-            div.innerHTML = '<div class="tl-head"><span class="tl-op" style="background:' + c + '22;color:' + c + '">' + ev.operation_type + '</span><span class="tl-time">' + d.toLocaleDateString() + ' ' + ts + '</span></div><div class="tl-payload">' + ph + '</div>';
+            div.innerHTML = '<div class="tl-head"><span class="tl-op" style="background:' + c + '22;color:' + c + '">' + escapeHtml(ev.operation_type) + '</span><span class="tl-time">' + escapeHtml(d.toLocaleDateString() + ' ' + ts) + '</span></div><div class="tl-payload">' + ph + '</div>';
             div.addEventListener('click', function(){ previewHistory(ev.timestamp); });
             list.appendChild(div);
         });
@@ -3187,112 +3990,146 @@ function previewHistory(targetTimestamp) {
 function closePreview() { document.getElementById('preview-overlay').style.display = 'none'; }
 
 // --- 行号 & 结构树 ---
-function updateLineNumbers() {
+//
+// 这两个面板过去每次都为全文的每个块生成一个绝对定位元素（结构树里还各带一个内联 SVG）。
+// 6000 块的笔记实测：行号栏 180ms、结构树 387ms，其中单是读 container.scrollHeight
+// 就要 98ms（强制全文回流），而且两个函数「写 DOM → 再读几何」把布局反复弄脏。
+// 现在改为：几何一次读齐 → 只渲染可视区 ± 边距 → 最后统一写。
+
+var STRUCT_MARGIN = 600;
+var structNodesCache = null;   // 层级只跟文本有关，滚动时可复用
+function invalidateStructCache() { structNodesCache = null; }
+
+function readGutterGeometry() {
     var editor = document.querySelector('#editor-container .ql-editor');
     var container = document.getElementById('editor-container');
-    if (!editor || !container) return;
-    var gutter = document.getElementById('line-gutter');
+    if (!editor || !container) return null;
     var blocks = editor.children;
-    var sel = quill.getSelection();
-    var cursorIdx = sel ? sel.index : -1;
-    var curLine = -1;
-    if (cursorIdx >= 0) {
-        var lineInfo = quill.getLine(cursorIdx);
-        if (lineInfo && lineInfo[0] && lineInfo[0].domNode) {
-            var activeNode = lineInfo[0].domNode;
-            for (var i = 0; i < blocks.length; i++) {
-                if (blocks[i] === activeNode) {
-                    curLine = i;
-                    break;
-                }
-            }
-        }
-    }
+    var n = blocks.length;
+    var scrollTop = container.scrollTop;
     var totalH = container.scrollHeight;
-    var html = '<div style="position:relative;height:' + totalH + 'px;">';
-    for (var i = 0; i < blocks.length; i++) {
-        var el = blocks[i];
-        var top = el.offsetTop;
-        var cls = (i === curLine) ? 'ln active' : 'ln';
-        // 第0行不算入正常计数（作为标题）
-        html += '<div class="' + cls + '" style="top:' + top + 'px;">' + i + '</div>';
+    // 视图切换动画期间 clientHeight 可能为 0，此时不能把可视区算成空的
+    var viewH = container.clientHeight || window.innerHeight || 1200;
+    var top = scrollTop - STRUCT_MARGIN;
+    var bottom = scrollTop + viewH + STRUCT_MARGIN;
+
+    // offsetTop 单调递增，二分定位首个进入视窗的块
+    var lo = 0, hi = n - 1, first = n;
+    while (lo <= hi) {
+        var mid = (lo + hi) >> 1;
+        var el = blocks[mid];
+        if (el.offsetTop + el.offsetHeight >= top) { first = mid; hi = mid - 1; }
+        else { lo = mid + 1; }
     }
-    html += '</div>';
-    gutter.innerHTML = html;
-    gutter.scrollTop = container.scrollTop;
+    var tops = {};
+    var last = first;
+    while (last < n) {
+        var t = blocks[last].offsetTop;
+        if (t > bottom) break;
+        tops[last] = t;
+        last++;
+    }
+    return { editor: editor, container: container, blocks: blocks, count: n,
+             scrollTop: scrollTop, totalH: totalH, first: first, last: last, tops: tops };
 }
 
-function updateStructTree() {
-    var editor = document.querySelector('#editor-container .ql-editor');
-    var container = document.getElementById('editor-container');
-    if (!editor || !container) return;
-    var tree = document.getElementById('struct-tree');
-    var blocks = editor.children;
-    var totalH = container.scrollHeight;
-    var html = '<div style="position:relative;height:' + totalH + 'px;">';
-    
-    // 先扫描每个块是否为空行
-    var isEmpty = [];
-    for (var i = 0; i < blocks.length; i++) {
-        var txt = (blocks[i].textContent || '').trim();
-        isEmpty.push(txt.length === 0);
+function getStructNodes(blocks) {
+    if (structNodesCache && structNodesCache.count === blocks.length) return structNodesCache.nodes;
+    var n = blocks.length;
+    var isEmpty = new Array(n);
+    for (var i = 0; i < n; i++) {
+        var tc = blocks[i].textContent;
+        isEmpty[i] = !tc || !/\S/.test(tc);
     }
-    
     var nodes = [];
     var titleFound = false;
-    for (var i = 0; i < blocks.length; i++) {
-        // 跳过空行本身，不在树中显示
-        if (isEmpty[i]) continue;
-        
-        var el = blocks[i];
-        var top = el.offsetTop;
-        var text = (el.textContent || '').substring(0, 20).trim();
-        
+    var emptyRun = 0;
+    for (var i = 0; i < n; i++) {
+        if (isEmpty[i]) { emptyRun++; continue; }
+        var text = (blocks[i].textContent || '').substring(0, 20).trim();
         var level, indent, label;
         if (!titleFound) {
-            level = 999; // 标题层级最高，包容一切
-            indent = 4;
-            label = 'T';
-            titleFound = true;
+            level = 999; indent = 4; label = 'T'; titleFound = true;
         } else {
-            // 向上数连续空行数
-            var emptyCount = 0;
-            for (var j = i - 1; j >= 0; j--) {
-                if (isEmpty[j]) emptyCount++;
-                else break;
-            }
-            // 层级: 无空行=2, 1空行=1, 2空行=0, 3空行=-1 ...
-            level = 2 - emptyCount;
-            // 缩进: level 2 最深(最右), 基础缩进增加12，与标题错开
-            indent = Math.max(12, 12 + (level - (-3)) * 8);
+            level = 2 - emptyRun;                       // 无空行=2，每多一个空行升一级
+            indent = Math.max(12, 12 + (level + 3) * 8);
             label = '' + level;
         }
-        
-        nodes.push({ top: top, text: text, level: level, indent: indent, label: label, startIndex: i });
+        emptyRun = 0;
+        nodes.push({ text: text, level: level, indent: indent, label: label, startIndex: i });
     }
-    
+    // 预先算好每个节点的终止块，渲染时不必再做 O(n²) 回溯
     for (var k = 0; k < nodes.length; k++) {
-        var n = nodes[k];
-        var nextTop = n.top + 20;
-        var endIndex = blocks.length;
-        var hasChildren = (k + 1 < nodes.length && nodes[k+1].level > n.level);
-        
+        nodes[k].endIndex = n;
+        nodes[k].endNode = -1;
+        nodes[k].hasChildren = (k + 1 < nodes.length && nodes[k + 1].level > nodes[k].level);
         for (var m = k + 1; m < nodes.length; m++) {
-            if (nodes[m].level <= n.level) {
-                endIndex = nodes[m].startIndex;
-                if (hasChildren) nextTop = nodes[m].top;
-                break;
+            if (nodes[m].level <= nodes[k].level) { nodes[k].endIndex = nodes[m].startIndex; nodes[k].endNode = m; break; }
+        }
+    }
+    structNodesCache = { count: n, nodes: nodes };
+    return nodes;
+}
+
+var COPY_BTN_SVG = '<div class="st-copy-btn" data-start="{S}" data-end="{E}" title="复制分支"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></div>';
+
+function buildLineNumbersHtml(geo) {
+    var curLine = -1;
+    var sel = quill.getSelection();
+    if (sel) {
+        var lineInfo = quill.getLine(sel.index);
+        if (lineInfo && lineInfo[0] && lineInfo[0].domNode) {
+            var activeNode = lineInfo[0].domNode;
+            for (var i = geo.first; i < geo.last; i++) {
+                if (geo.blocks[i] === activeNode) { curLine = i; break; }
             }
         }
-        if (hasChildren && endIndex === blocks.length) nextTop = totalH;
-        var h = nextTop - n.top;
-        html += '<div class="st-node" style="top:' + n.top + 'px; left:' + n.indent + 'px; height:' + h + 'px;">';
-        html += '<div class="st-copy-btn" data-start="' + n.startIndex + '" data-end="' + endIndex + '" title="复制分支"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></div>';
-        html += n.label + ' ' + n.text + '</div>';
     }
-    html += '</div>';
-    tree.innerHTML = html;
-    tree.scrollTop = container.scrollTop;
+    var html = '<div style="position:relative;height:' + geo.totalH + 'px;">';
+    for (var i = geo.first; i < geo.last; i++) {
+        html += '<div class="' + (i === curLine ? 'ln active' : 'ln') + '" style="top:' + geo.tops[i] + 'px;">' + i + '</div>';
+    }
+    return html + '</div>';
+}
+
+function buildStructTreeHtml(geo) {
+    var nodes = getStructNodes(geo.blocks);
+    var html = '<div style="position:relative;height:' + geo.totalH + 'px;">';
+    for (var k = 0; k < nodes.length; k++) {
+        var n = nodes[k];
+        if (n.startIndex < geo.first || n.startIndex >= geo.last) continue;
+        var top = geo.tops[n.startIndex];
+        var nextTop = top + 20;
+        if (n.hasChildren) {
+            if (n.endNode >= 0) {
+                var endBlock = nodes[n.endNode].startIndex;
+                // 终止块多半就在可视区内；不在的话额外读一次，此刻仍处于读阶段
+                nextTop = (endBlock in geo.tops) ? geo.tops[endBlock] : geo.blocks[endBlock].offsetTop;
+            } else {
+                nextTop = geo.totalH;
+            }
+        }
+        html += '<div class="st-node" style="top:' + top + 'px; left:' + n.indent + 'px; height:' + (nextTop - top) + 'px;">';
+        html += COPY_BTN_SVG.replace('{S}', n.startIndex).replace('{E}', n.endIndex);
+        html += escapeHtml(n.label) + ' ' + escapeHtml(n.text) + '</div>';
+    }
+    return html + '</div>';
+}
+
+function updateLineNumbers(geo) {
+    geo = geo || readGutterGeometry();
+    if (!geo) return;
+    var gutter = document.getElementById('line-gutter');
+    gutter.innerHTML = buildLineNumbersHtml(geo);
+    gutter.scrollTop = geo.scrollTop;
+}
+
+function updateStructTree(geo) {
+    geo = geo || readGutterGeometry();
+    if (!geo) return;
+    var tree = document.getElementById('struct-tree');
+    tree.innerHTML = buildStructTreeHtml(geo);
+    tree.scrollTop = geo.scrollTop;
 }
 
 function updateCursorStatus() {
@@ -3346,17 +4183,43 @@ function updateCapsule() {
     if (capFiles) { capFiles.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:2px;vertical-align:-2px"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg> ' + fileCount; capFiles.style.display = fileCount > 0 ? 'flex' : 'none'; }
 }
 
-function syncGutters() { updateLineNumbers(); updateStructTree(); updateCursorStatus(); updateCapsule(); }
+function syncGutters() {
+    var geo = readGutterGeometry();
+    if (!geo) return;
+    // 先把两块 HTML 都算完（纯读），再一起写，避免写 DOM 后又读几何触发二次全文回流
+    var gutterHtml = buildLineNumbersHtml(geo);
+    var treeHtml = buildStructTreeHtml(geo);
+    var gutter = document.getElementById('line-gutter');
+    var tree = document.getElementById('struct-tree');
+    gutter.innerHTML = gutterHtml; gutter.scrollTop = geo.scrollTop;
+    tree.innerHTML = treeHtml; tree.scrollTop = geo.scrollTop;
+    updateCursorStatus();
+    updateCapsule();
+}
 
+// 行号栏和结构树是全量重建，且循环读 offsetTop 会强制同步布局（长文档为 O(n) 次重排）。
+// 逐键触发会让打字明显卡顿，这里合并到停顿后再算一次。
+var gutterTimer = null;
+function syncGuttersDebounced(delay) {
+    clearTimeout(gutterTimer);
+    gutterTimer = setTimeout(syncGutters, delay == null ? 120 : delay);
+}
+
+var scrollRenderPending = false;
 function syncScroll() {
     var y = document.getElementById('editor-container').scrollTop;
     document.getElementById('line-gutter').scrollTop = y;
     document.getElementById('struct-tree').scrollTop = y;
+    // 只渲染可视区，滚动后需要补渲染新进入视野的行
+    if (!scrollRenderPending) {
+        scrollRenderPending = true;
+        requestAnimationFrame(function () { scrollRenderPending = false; syncGutters(); });
+    }
 }
 
 // 编辑器滚动同步
 document.getElementById('editor-container').addEventListener('scroll', syncScroll, { passive: true });
-quill.on('text-change', function() { setTimeout(syncGutters, 10); });
+quill.on('text-change', function() { invalidateStructCache(); syncGuttersDebounced(120); });
 quill.on('selection-change', function() { setTimeout(function() { updateLineNumbers(); updateCursorStatus(); }, 10); });
 document.addEventListener('selectionchange', function() {
     if (document.activeElement && document.activeElement.closest('.ql-editor')) {
@@ -4104,7 +4967,7 @@ document.getElementById('about-anchor-btn').addEventListener('click', function()
         <div id="about-close-btn" style="position:absolute; top:-10px; right:-10px; font-size:36px; font-weight:900; color:#000; cursor:pointer; text-shadow: -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 0 10px #fff; transition: transform 0.2s;">X</div>
         <div style="font-size:32px; font-weight:900; color:#000; margin-bottom: 20px; letter-spacing: 2px; text-shadow: -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 0 10px #fff;">关于 锚点</div>
         <div style="font-size:18px; color:#000; line-height:1.8; font-weight: 900; text-shadow: -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 0 8px #fff;">
-            <div>版本号: 1.20.3</div>
+            <div>版本号: 1.21.0</div>
             <div style="margin-top:10px;">技术栈:</div>
             <div style="margin-left: 10px;">- 前端: HTML5, CSS3, Vanilla JS</div>
             <div style="margin-left: 10px;">- 后端: Rust, Tauri, SQLite, Jieba</div>
@@ -4180,6 +5043,22 @@ document.getElementById('about-close-btn').addEventListener('click', function() 
         </label>
         
         <div style="display:flex; flex-direction:column; gap:8px;">
+            <div style="color:#aaa; font-size:14px;">画面宽度:</div>
+            <select id="ex-opt-width" style="background:#333; color:#fff; border:1px solid #555; padding:6px; border-radius:4px; outline:none;">
+                <option value="0" selected>跟随当前窗口</option>
+                <option value="390">手机 (390)</option>
+                <option value="768">平板 (768)</option>
+                <option value="1280">720p (1280)</option>
+                <option value="1920">1K / 1080p (1920)</option>
+                <option value="2560">2K (2560)</option>
+                <option value="3840">4K (3840)</option>
+                <option value="7680">8K (7680)</option>
+                <option value="15360">16K (15360)</option>
+                <option value="30720">32K (30720)</option>
+            </select>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:8px;">
             <div style="color:#aaa; font-size:14px;">分辨率倍数 (Scale):</div>
             <select id="ex-opt-scale" style="background:#333; color:#fff; border:1px solid #555; padding:6px; border-radius:4px; outline:none;">
                 <option value="1">x1 (标准)</option>
@@ -4196,9 +5075,10 @@ document.getElementById('about-close-btn').addEventListener('click', function() 
     </div>
 </div>
 <div id="export-img-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:999999; flex-direction:column; align-items:center; justify-content:center; backdrop-filter:blur(5px);">
-    <div style="color:#fff; font-size:18px; margin-bottom:20px; font-weight:bold; letter-spacing:2px;">正在渲染长图...</div>
+    <div style="color:#fff; font-size:18px; margin-bottom:12px; font-weight:bold; letter-spacing:2px;">正在渲染长图...</div>
+    <div id="export-img-phase" style="color:#aaa; font-size:13px; margin-bottom:14px; min-height:18px;">准备中...</div>
     <div style="width:300px; height:6px; background:#333; border-radius:3px; overflow:hidden;">
-        <div id="export-img-bar" style="width:0%; height:100%; background:#4caf50; transition:width 1s ease-out;"></div>
+        <div id="export-img-bar" style="width:0%; height:100%; background:#4caf50; transition:width .25s linear;"></div>
     </div>
 </div>
 <script>
@@ -4229,17 +5109,15 @@ document.getElementById('ex-confirm-btn').addEventListener('click', function() {
     bar.style.transition = 'none';
     bar.style.width = '0%';
     
-    setTimeout(function() {
-        bar.style.transition = 'width 1s ease-out';
-        bar.style.width = '70%';
-    }, 50);
     
     var editView = document.getElementById('edit-view');
+    var optWidth = parseInt(document.getElementById('ex-opt-width').value) || 0;
+    var exportWidth = optWidth > 0 ? optWidth : editView.offsetWidth;
     var clone = editView.cloneNode(true);
     clone.style.position = 'absolute';
     clone.style.top = '-99999px';
     clone.style.left = '0';
-    clone.style.width = editView.offsetWidth + 'px';
+    clone.style.width = exportWidth + 'px';
     clone.style.height = 'auto';
     clone.style.overflow = 'visible';
     clone.style.zIndex = '-9999';
@@ -4335,91 +5213,290 @@ document.getElementById('ex-confirm-btn').addEventListener('click', function() {
     var btm = clone.querySelector('#bottom-tl'); if (btm) btm.style.display = 'none';
     
     document.body.appendChild(clone);
-    
-    // Convert local images to base64 to avoid html2canvas failing on custom protocol URLs
-    var imgs = Array.from(clone.querySelectorAll('img'));
-    var imgPromises = imgs.map(function(img) {
-        if (img.src && (img.src.indexOf('anchor.localhost') !== -1 || img.src.startsWith('anchor://') || img.src.indexOf('asset.localhost') !== -1)) {
-            return fetch(img.src)
-                .then(function(res) { return res.blob(); })
-                .then(function(blob) {
-                    return new Promise(function(resolve, reject) {
-                        var reader = new FileReader();
-                        reader.onloadend = function() {
-                            img.src = reader.result;
-                            resolve();
-                        };
-                        reader.onerror = reject;
-                        reader.readAsDataURL(blob);
-                    });
-                })
-                .catch(function(e) { console.error("Failed to fetch image for export", e); });
+
+    // 必须关掉 content-visibility 再交给 html2canvas：
+    // .ql-editor > * 开了 content-visibility:auto，屏幕外的块会跳过布局、
+    // 用 contain-intrinsic-size 的 24px 占位高代替真实高度。导出用的克隆整体在屏幕外，
+    // 于是每段都塌缩成 24px，文字溢出自身盒子叠到下一段上（表现为重叠乱码）。
+    clone.style.contentVisibility = 'visible';
+
+    // 视图切换动画必须清掉：#edit-view 带着 anim-enter-edit，其 viewEnterEdit 动画
+    // 起始帧是 opacity:0。html2canvas 会把 DOM 复制进自己的 iframe，动画在那里从头重播，
+    // 它恰好在 0% 那一刻截图，导出的就是一张全空的图（时好时坏取决于时序）。
+    clone.classList.remove('anim-enter-edit', 'anim-leave-edit', 'anim-enter-home', 'anim-leave-home');
+    clone.style.animation = 'none';
+    clone.style.transition = 'none';
+    clone.style.opacity = '1';
+    clone.style.transform = 'none';
+
+    clone.querySelectorAll('*').forEach(function(n) {
+        n.style.contentVisibility = 'visible';
+        n.style.containIntrinsicSize = 'auto';
+        // 同理，后代的入场动画（如图片的 img-anim-in）也会被 html2canvas 抓在起始帧
+        n.style.animation = 'none';
+        n.style.transition = 'none';
+    });
+    // 强制同步回流，确保 html2canvas 读到的是真实尺寸
+    void clone.offsetHeight;
+
+    // 高度必须按克隆自身的真实布局重算：原编辑器的 scrollHeight 同样被 content-visibility
+    // 的占位高低估，沿用它会把长笔记的尾部截断。
+    var cloneEditor = clone.querySelector('.ql-editor');
+    if (cloneEditor) {
+        contentHeight = Math.max(contentHeight, cloneEditor.scrollHeight);
+        clone.style.height = (contentHeight + 160) + 'px';
+        if (editorCont) editorCont.style.height = contentHeight + 'px';
+        if (lg) lg.style.height = contentHeight + 'px';
+        if (sb) sb.style.height = contentHeight + 'px';
+
+        // 屏幕上的行号栏和结构树是虚拟化的，只渲染可视区那几十行，直接克隆会导致
+        // 导出图里绝大部分行号缺失。这里按克隆自身的布局重建完整的两栏。
+        // 宽度改成预设值后文字重新折行，位置也只能从克隆上重新量。
+        var exBlocks = cloneEditor.children;
+        var exTops = [];
+        for (var bi = 0; bi < exBlocks.length; bi++) exTops.push(exBlocks[bi].offsetTop);
+
+        if (lg) {
+            var lnHtml = '<div style="position:relative;height:' + contentHeight + 'px;">';
+            for (var li = 0; li < exBlocks.length; li++) {
+                lnHtml += '<div class="ln" style="top:' + exTops[li] + 'px;">' + li + '</div>';
+            }
+            lg.innerHTML = lnHtml + '</div>';
         }
-        return Promise.resolve();
+        if (sb) {
+            var exNodes = getStructNodes(exBlocks);
+            var stHtml = '<div style="position:relative;height:' + contentHeight + 'px;">';
+            for (var ni = 0; ni < exNodes.length; ni++) {
+                var nd = exNodes[ni];
+                var nTop = exTops[nd.startIndex];
+                var nNext = nTop + 20;
+                if (nd.hasChildren) {
+                    nNext = nd.endNode >= 0 ? exTops[exNodes[nd.endNode].startIndex] : contentHeight;
+                }
+                stHtml += '<div class="st-node" style="top:' + nTop + 'px; left:' + nd.indent + 'px; height:' + (nNext - nTop) + 'px; opacity:1;">'
+                        + escapeHtml(nd.label) + ' ' + escapeHtml(nd.text) + '</div>';
+            }
+            sb.innerHTML = stHtml + '</div>';
+        }
+    }
+
+    var sessionId = null;
+    var viewport = null;
+
+    function setPhase(text, pct) {
+        var ph = document.getElementById('export-img-phase');
+        if (ph) ph.innerText = text;
+        if (pct != null) bar.style.width = Math.max(0, Math.min(100, pct)) + '%';
+    }
+
+    // 浏览器画布有两条硬上限：单边 65535 像素、总面积 2^28（2.68 亿）像素。
+    // 超过就分片渲染，交给后端逐行拼进一个 PNG —— PNG 文件本身没有这个限制。
+    var MAX_CANVAS_DIM = 64000;
+    var MAX_CANVAS_PIXELS = 240000000;
+    // 单片预算取得比硬上限低得多：分片越小，峰值内存越低、失败风险越小
+    var BAND_PIXELS = 40000000;
+
+    function canvasToBase64(canvas) {
+        return new Promise(function (resolve, reject) {
+            try {
+                canvas.toBlob(function (blob) {
+                    if (!blob) { reject(new Error('分片编码失败')); return; }
+                    var fr = new FileReader();
+                    fr.onloadend = function () { resolve(fr.result); };
+                    fr.onerror = function () { reject(new Error('分片读取失败')); };
+                    fr.readAsDataURL(blob);
+                }, 'image/png');
+            } catch (e) { reject(e); }
+        });
+    }
+
+    function paintBackdrop(canvas) {
+        // destination-over 把背景垫到已有内容下面，省掉一整块同尺寸画布
+        var ctx = canvas.getContext('2d');
+        ctx.globalCompositeOperation = 'destination-over';
+        var glOp = parseFloat(getComputedStyle(document.body).getPropertyValue('--canvas-op'));
+        if (isNaN(glOp)) glOp = 1;
+        if (glOp > 0) {
+            var glCanvas = document.getElementById('glcanvas');
+            if (glCanvas && glCanvas.width > 0 && glCanvas.height > 0) {
+                ctx.globalAlpha = glOp;
+                var scaledH = (canvas.width / glCanvas.width) * glCanvas.height;
+                for (var y = 0; y < canvas.height; y += scaledH) {
+                    ctx.drawImage(glCanvas, 0, 0, glCanvas.width, glCanvas.height, 0, y, canvas.width, scaledH);
+                }
+                ctx.globalAlpha = 1.0;
+            }
+        }
+        var bodyBg = getComputedStyle(document.body, '::before').backgroundColor;
+        ctx.fillStyle = (bodyBg && bodyBg !== 'rgba(0, 0, 0, 0)' && bodyBg !== 'transparent') ? bodyBg : '#141414';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.globalCompositeOperation = 'source-over';
+    }
+
+    // 图片转 base64：逐张上报进度，这一步在有大量插图时并不快
+    setPhase('转换内嵌图片...', 4);
+    var imgs = Array.from(clone.querySelectorAll('img')).filter(function (img) {
+        return img.src && (img.src.indexOf('anchor.localhost') !== -1 || img.src.indexOf('anchor://') === 0 || img.src.indexOf('asset.localhost') !== -1);
+    });
+    var imgDone = 0;
+    var imgPromises = imgs.map(function (img) {
+        return fetch(img.src)
+            .then(function (res) { return res.blob(); })
+            .then(function (blob) {
+                return new Promise(function (resolve, reject) {
+                    var reader = new FileReader();
+                    reader.onloadend = function () { img.src = reader.result; resolve(); };
+                    reader.onerror = reject;
+                    reader.readAsDataURL(blob);
+                });
+            })
+            .catch(function (e) { console.error('Failed to fetch image for export', e); })
+            .then(function () {
+                imgDone++;
+                setPhase('转换内嵌图片 ' + imgDone + '/' + imgs.length, 4 + 14 * (imgDone / Math.max(1, imgs.length)));
+            });
     });
 
-    Promise.all(imgPromises).then(function() {
-        html2canvas(clone, {
-            useCORS: true,
-            backgroundColor: (optBg ? null : '#141414'),
-            scale: optScale,
-            logging: false
-        }).then(function(contentCanvas) {
-            bar.style.transition = 'width 0.3s ease-out';
-        bar.style.width = '100%';
-        document.body.removeChild(clone);
-        
-        var finalCanvas = contentCanvas;
-        if (optBg) {
-            var bgCanvas = document.createElement('canvas');
-            bgCanvas.width = contentCanvas.width;
-            bgCanvas.height = contentCanvas.height;
-            var ctx = bgCanvas.getContext('2d');
-            
-            var bodyBg = getComputedStyle(document.body, '::before').backgroundColor;
-            if (bodyBg && bodyBg !== 'rgba(0, 0, 0, 0)' && bodyBg !== 'transparent') {
-                ctx.fillStyle = bodyBg;
-            } else {
-                ctx.fillStyle = '#141414';
-            }
-            ctx.fillRect(0, 0, bgCanvas.width, bgCanvas.height);
-            
-            var glOp = parseFloat(getComputedStyle(document.body).getPropertyValue('--canvas-op'));
-            if (isNaN(glOp)) glOp = 1;
-            
-            if (glOp > 0) {
-                var glCanvas = document.getElementById('glcanvas');
-                var glH = glCanvas.height;
-                var glW = glCanvas.width;
-                if (glH > 0 && glW > 0) {
-                    ctx.globalAlpha = glOp;
-                    var scaledH = (bgCanvas.width / glW) * glH;
-                    var y = 0;
-                    while (y < bgCanvas.height) {
-                        ctx.drawImage(glCanvas, 0, 0, glW, glH, 0, y, bgCanvas.width, scaledH);
-                        y += scaledH;
-                    }
-                    ctx.globalAlpha = 1.0;
+    Promise.all(imgPromises).then(function () {
+        setPhase('计算排版...', 19);
+        var totalH = clone.offsetHeight || (contentHeight + 160);
+        var totalW = clone.offsetWidth || 1920;
+
+        // 高度不再受画布限制——超高的部分由分片渲染 + 后端拼接解决，输出可以任意长。
+        // 只有宽度必须塞进单张画布，因为每一片都是整宽的。
+        var useScale = Math.min(optScale, MAX_CANVAS_DIM / totalW);
+        var outW = Math.round(totalW * useScale);
+        var outH = Math.round(totalH * useScale);
+
+        if (outW > MAX_CANVAS_DIM) {
+            if (clone.parentNode) document.body.removeChild(clone);
+            overlay.style.display = 'none';
+            customDialog({
+                title: '宽度超出上限',
+                message: '按当前设置图片宽 ' + outW + ' 像素，超过单张图片 65535 像素的边长上限。\n\n请选择更小的画面宽度或更低的分辨率倍数。'
+            });
+            return;
+        }
+
+        // 按块边界分片，保证不会从半行切断；每片像素量不超过预算
+        var cloneEditor = clone.querySelector('.ql-editor');
+        var bandCssH = Math.max(400, Math.floor(Math.min(
+            BAND_PIXELS / Math.max(1, outW) / useScale,
+            MAX_CANVAS_DIM / useScale
+        )));
+        var bands = [];
+        if (outW * outH <= BAND_PIXELS) {
+            bands.push({ top: 0, height: totalH, from: 0, to: cloneEditor ? cloneEditor.children.length : 0 });
+        } else if (cloneEditor) {
+            var blocks = cloneEditor.children;
+            var editorTop = clone.querySelector('#editor-container');
+            var baseOffset = editorTop ? editorTop.offsetTop : 0;
+            var bandTop = 0, from = 0;
+            for (var i = 0; i < blocks.length; i++) {
+                var blockBottom = baseOffset + blocks[i].offsetTop + blocks[i].offsetHeight;
+                if (blockBottom - bandTop > bandCssH && i > from) {
+                    var cut = baseOffset + blocks[i].offsetTop;
+                    bands.push({ top: bandTop, height: cut - bandTop, from: from, to: i });
+                    bandTop = cut; from = i;
                 }
             }
-            
-            ctx.drawImage(contentCanvas, 0, 0);
-            finalCanvas = bgCanvas;
+            bands.push({ top: bandTop, height: totalH - bandTop, from: from, to: blocks.length });
+        } else {
+            bands.push({ top: 0, height: totalH, from: 0, to: 0 });
         }
-        
-        setTimeout(function() {
-            overlay.style.display = 'none';
-            var link = document.createElement('a');
-            var noteTitle = document.getElementById('cap-title').textContent || '笔记';
-            link.download = noteTitle + '_长图.png';
-            link.href = finalCanvas.toDataURL('image/png');
-            link.click();
-        }, 400);
-    }).catch(function(err) {
-        if(clone.parentNode) document.body.removeChild(clone);
+
+        var bandCount = bands.length;
+        var canvasH = Math.round(totalH * useScale);
+
+        // 分片渲染必须把 clone 放进一个定高视口里，用负偏移露出对应的那一段。
+        // 这样每片的排版与整体完全一致，不会因为重新布局而错位。
+        if (bandCount > 1) {
+            viewport = document.createElement('div');
+            viewport.style.cssText = 'position:absolute;left:0;top:-99999px;overflow:hidden;z-index:-9999;width:' + totalW + 'px;';
+            clone.parentNode.removeChild(clone);
+            clone.style.top = '0';
+            clone.style.position = 'absolute';
+            viewport.appendChild(clone);
+            document.body.appendChild(viewport);
+        }
+
+
+        function renderBand(k) {
+            var band = bands[k];
+            setPhase('渲染第 ' + (k + 1) + '/' + bandCount + ' 片', 20 + 70 * (k / bandCount));
+            if (viewport) {
+                viewport.style.height = Math.ceil(band.height) + 'px';
+                clone.style.top = (-band.top) + 'px';
+            }
+            var target = viewport || clone;
+            return html2canvas(target, {
+                useCORS: true,
+                backgroundColor: (optBg ? null : '#141414'),
+                scale: useScale,
+                logging: false
+            }).then(function (canvas) {
+                if (optBg) paintBackdrop(canvas);
+                return canvasToBase64(canvas).then(function (b64) {
+                    canvas.width = 1; canvas.height = 1;   // 及时释放，长笔记片数多
+                    setPhase('写入第 ' + (k + 1) + '/' + bandCount + ' 片', 20 + 70 * ((k + 0.5) / bandCount));
+                    return invoke('png_stitch_add', { sessionId: sessionId, bandBase64: b64 });
+                });
+            });
+        }
+
+        function runBands(k) {
+            if (k >= bandCount) return Promise.resolve();
+            return renderBand(k).then(function () {
+                return new Promise(function (res) {
+                    setTimeout(function () { res(runBands(k + 1)); }, 30);
+                });
+            });
+        }
+
+        return invoke('png_stitch_begin', { width: Math.round(totalW * useScale), height: canvasH })
+            .then(function (id) { sessionId = id; return runBands(0); })
+            .then(function () {
+            setPhase('保存文件...', 92);
+            var noteTitle = (document.getElementById('cap-title').textContent || '笔记').replace(/[\\/:*?"<>|]/g, '_');
+            return window.__TAURI__.dialog.save({
+                defaultPath: noteTitle + '_长图.png',
+                filters: [{ name: 'PNG 图片', extensions: ['png'] }]
+            }).then(function (savePath) {
+                if (!savePath) {
+                    if (sessionId) invoke('png_stitch_abort', { sessionId: sessionId });
+                    return { cancelled: true };
+                }
+                return invoke('png_stitch_finish', { sessionId: sessionId, savePath: savePath })
+                    .then(function () { return { path: savePath }; });
+            });
+        }).then(function (res) {
+            setPhase('完成', 100);
+            if (viewport && viewport.parentNode) document.body.removeChild(viewport);
+            else if (clone.parentNode) document.body.removeChild(clone);
+            setTimeout(function () {
+                overlay.style.display = 'none';
+                if (res && res.cancelled) return;
+                var sizeNote = Math.round(totalW * useScale) + ' × ' + canvasH + ' 像素';
+                if (useScale < optScale) {
+                    customDialog({
+                        title: '导出完成（已降低倍率）',
+                        message: '画面宽 ' + Math.round(totalW) + ' 像素，按 ' + optScale + ' 倍会超过单张图片 65535 像素的宽度上限。\n\n'
+                               + '已降到 ' + (Math.round(useScale * 100) / 100) + ' 倍，输出 ' + sizeNote + '。'
+                    });
+                } else if (bandCount > 1) {
+                    customDialog({
+                        title: '导出完成',
+                        message: '输出 ' + sizeNote + '，超过浏览器单张画布的上限，已分 ' + bandCount + ' 片渲染后在后台拼接为一张完整图片。'
+                    });
+                }
+            }, 250);
+        });
+    }).catch(function (err) {
+        if (sessionId) invoke('png_stitch_abort', { sessionId: sessionId }).catch(function () {});
+        if (viewport && viewport.parentNode) viewport.parentNode.removeChild(viewport);
+        else if (clone.parentNode) clone.parentNode.removeChild(clone);
         overlay.style.display = 'none';
         customDialog({ title: '导出失败', message: '渲染长图时出错: ' + err });
-    });
     });
 });
 

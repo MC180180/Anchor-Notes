@@ -1,6 +1,6 @@
 [package]
 name = "anchor_ui"
-version = "1.20.4"
+version = "1.21.0"
 edition = "2021"
 
 [dependencies]
@@ -21,10 +21,12 @@ zeroize = "1.8.2"
 percent-encoding = "2.3.2"
 window-vibrancy = "0.4.3"
 lofty = "0.24.0"
+png = "0.17"
+similar = "2"
 
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.19"
-windows = { version = "0.39", features = ["Win32_System_WinRT"] }
+windows = { version = "0.39", features = ["Win32_System_WinRT", "Win32_Foundation", "Win32_Security", "Win32_System_Threading", "Win32_System_Shutdown", "Win32_UI_WindowsAndMessaging"] }
 
 [build-dependencies]
 tauri-build = { version = "1.5", features = [] }
